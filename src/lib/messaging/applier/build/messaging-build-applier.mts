@@ -2184,7 +2184,7 @@ function fatalMessagingBuildDiagnostic(error: unknown): string {
     return "Messaging build applier command failed.";
   }
   if (error instanceof MessagingBuildApplierError) {
-    return "Messaging build applier rejected invalid or unsafe input.";
+    return `Messaging build applier rejected invalid or unsafe input. TEMP-DEBUG: ${error.message}`;
   }
   return "Messaging build applier failed.";
 }
