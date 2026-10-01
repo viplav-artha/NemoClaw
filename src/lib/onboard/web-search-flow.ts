@@ -35,15 +35,22 @@ import { verifyWebSearchInsideSandbox as verifyWebSearchInsideSandboxWithDeps } 
 
 const BRAVE_SEARCH_HELP_URL = "https://brave.com/search/api/";
 const TAVILY_SEARCH_HELP_URL = "https://app.tavily.com/home";
+const DUCKDUCKGO_SEARCH_HELP_URL = "https://docs.openclaw.ai/tools/web";
 const WEB_SEARCH_VALIDATION_TIMING_ARGS = ["--connect-timeout", "10", "--max-time", "15"] as const;
+// DuckDuckGo needs no probe config — it never reaches validateWebSearchApiKey
+// (no credential to validate), but the Record must stay total over
+// WebSearchProvider for type-checking.
 const CURL_CONFIG_PREFIX: Record<WebSearchProvider, string> = {
   brave: "nemoclaw-brave-probe",
   tavily: "nemoclaw-tavily-probe",
+  duckduckgo: "nemoclaw-duckduckgo-probe",
 };
 
 type WebSearchProviderSpec = {
   provider: WebSearchProvider;
-  envKey: string;
+  // null marks a keyless provider (DuckDuckGo): no OpenShell credential
+  // provider, no process env var, nothing to prompt for or validate.
+  envKey: string | null;
   label: string;
   helpUrl: string;
 };
@@ -61,7 +68,18 @@ const WEB_SEARCH_PROVIDER_SPECS: Record<WebSearchProvider, WebSearchProviderSpec
     label: webSearchLabelFor("tavily"),
     helpUrl: TAVILY_SEARCH_HELP_URL,
   },
+  duckduckgo: {
+    provider: "duckduckgo",
+    envKey: null,
+    label: webSearchLabelFor("duckduckgo"),
+    helpUrl: DUCKDUCKGO_SEARCH_HELP_URL,
+  },
 };
+
+/** True when the provider brokers no OpenShell credential (DuckDuckGo). */
+function isKeylessWebSearchProvider(provider: WebSearchProvider): boolean {
+  return webSearchEnvFor(provider) === null;
+}
 
 export interface WebSearchFlowDeps {
   prompt(question: string, options?: { secret?: boolean }): Promise<string>;
@@ -168,6 +186,9 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
   }
 
   function validateWebSearchApiKey(provider: WebSearchProvider, apiKey: string): CurlProbeResult {
+    if (isKeylessWebSearchProvider(provider)) {
+      throw new Error(`${providerSpec(provider).label} does not use an API key; nothing to validate.`);
+    }
     if (/[\r\n]/.test(apiKey)) {
       return invalidApiKey(provider, "must not contain line breaks.");
     }
@@ -257,16 +278,25 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
     return promptWebSearchApiKey("brave");
   }
 
+  // No OpenShell credential exists for a keyless provider (DuckDuckGo), so
+  // there is nothing saved to read back.
   function configuredCredential(provider: WebSearchProvider): string {
     const envKey = webSearchEnvFor(provider);
+    if (!envKey) return "";
     return readCredential(envKey) || normalizeCredentialValue(env[envKey]);
   }
 
   function stageValidatedCredential(provider: WebSearchProvider, apiKey: string): void {
     const envKey = webSearchEnvFor(provider);
+    if (!envKey) return;
     persistCredential(envKey, apiKey);
     env[envKey] = apiKey;
   }
+
+  // Sentinel used only as a truthy in-memory success signal for a keyless
+  // provider. It is never persisted (stageValidatedCredential is a no-op for
+  // keyless providers) and never written to any credential store or env var.
+  const KEYLESS_PROVIDER_SENTINEL = "(no key needed)";
 
   async function ensureValidatedWebSearchCredential(
     providerOrConfig: WebSearchProvider | WebSearchConfig,
@@ -276,9 +306,12 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
       typeof providerOrConfig === "string"
         ? providerOrConfig
         : webSearchProviderForConfig(providerOrConfig);
+    if (isKeylessWebSearchProvider(provider)) return KEYLESS_PROVIDER_SENTINEL;
     const spec = providerSpec(provider);
-    const savedApiKey = readCredential(spec.envKey);
-    let apiKey = savedApiKey || normalizeCredentialValue(env[spec.envKey]);
+    // Non-null: the keyless (envKey === null) case already returned above.
+    const envKey = spec.envKey as string;
+    const savedApiKey = readCredential(envKey);
+    let apiKey = savedApiKey || normalizeCredentialValue(env[envKey]);
     let usingSavedKey = Boolean(savedApiKey);
 
     while (true) {
@@ -417,6 +450,14 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
     }
     if (!provider) return null;
     if (!providerSupported(provider, agent, dockerfilePathOverride)) return null;
+
+    if (isKeylessWebSearchProvider(provider)) {
+      // DuckDuckGo brokers no credential and is never implicitly detected —
+      // it only reaches here via an explicit NEMOCLAW_WEB_SEARCH_PROVIDER or
+      // an existing persisted config, so just accept it.
+      deps.note(`  [non-interactive] ${providerSpec(provider).label} requested.`);
+      return { fetchEnabled: true, provider };
+    }
 
     const spec = providerSpec(provider);
     const apiKey = configuredCredential(provider);

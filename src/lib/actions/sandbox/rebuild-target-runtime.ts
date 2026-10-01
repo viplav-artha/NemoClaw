@@ -57,6 +57,9 @@ function canReuseGatewayWebSearchCredential(
 ): boolean {
   if (target.agentDefinition) return false;
   const credentialEnv = webSearchEnvFor(provider);
+  // A keyless provider (DuckDuckGo) never registers a gateway credential
+  // binding, so there is nothing to check reuse against.
+  if (!credentialEnv) return false;
   if (getCredential(credentialEnv)) return false;
   const providerName = `${sb.name}-${provider}-search`;
   const matches = matchesGatewayCredentialFamilyProviderBinding(

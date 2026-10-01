@@ -6,7 +6,7 @@ import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/opensh
 import { selectedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
 import { shellQuote } from "../core/shell-quote";
 
-export type WebSearchVerifyProvider = "brave" | "tavily";
+export type WebSearchVerifyProvider = "brave" | "tavily" | "duckduckgo";
 
 export type WebSearchVerifyAgent =
   | {
@@ -18,7 +18,8 @@ export type WebSearchVerifyAgent =
 export type WebSearchVerifyDeps = {
   commandExecutor: OpenShellSandboxBufferedCommandExecutor;
   cliName: () => string;
-  webSearchEnvFor: (provider: WebSearchVerifyProvider) => string;
+  // null for a keyless provider (DuckDuckGo) — no OpenShell credential exists.
+  webSearchEnvFor: (provider: WebSearchVerifyProvider) => string | null;
   webSearchLabelFor: (provider: WebSearchVerifyProvider) => string;
   log?: (message?: string) => void;
   warn?: (message?: string) => void;
@@ -100,6 +101,9 @@ async function checkWebSearchEnvSecretBoundary(
   warn: (message?: string) => void,
 ): Promise<boolean> {
   const envKey = deps.webSearchEnvFor(provider);
+  // No credential is ever attached for a keyless provider (DuckDuckGo), so
+  // there is no secret-exposure boundary to check.
+  if (!envKey) return false;
   let probe: string | null = null;
   try {
     probe = await runSandboxCommand(
@@ -158,6 +162,43 @@ function buildBraveEgressProbeCommand(apiKey: string): string {
   ]
     .map(shellQuote)
     .join(" ");
+}
+
+// Endpoint, query params, and User-Agent confirmed from the real
+// @openclaw/duckduckgo-plugin@2026.9.1 source (extensions/duckduckgo/src/ddg-client.ts):
+// GET https://html.duckduckgo.com/html?q=<query>&kp=<safeSearchParam>, scraping the
+// non-JS HTML results page. No API key — this is a plain reachability/shape probe.
+function buildDuckDuckGoEgressProbeCommand(): string {
+  return [
+    "curl",
+    "-sS",
+    "--compressed",
+    "--max-time",
+    "20",
+    "-G",
+    "https://html.duckduckgo.com/html",
+    "--data-urlencode",
+    "q=NVIDIA",
+    "--data-urlencode",
+    "kp=-1",
+    "-A",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "-w",
+    "\nHTTP_STATUS:%{http_code}\n",
+  ]
+    .map(shellQuote)
+    .join(" ");
+}
+
+// Same result and bot-challenge markers the plugin itself checks for
+// (result__a / result__snippet anchors; recaptcha/challenge-form markup).
+function hasDuckDuckGoResult(body: string): boolean {
+  return /class="[^"]*\bresult__a\b[^"]*"/i.test(body);
+}
+
+function isDuckDuckGoBotChallenge(body: string): boolean {
+  if (hasDuckDuckGoResult(body)) return false;
+  return /g-recaptcha|are you a human|id="challenge-form"|name="challenge"/i.test(body);
 }
 
 function hasBraveResult(body: string): boolean {
@@ -363,6 +404,43 @@ export async function verifyWebSearchInsideSandbox(
           return true;
         }
         const provider = search.provider;
+        if (provider === "duckduckgo") {
+          // Keyless provider: no apiKey placeholder exists in openclaw.json,
+          // so there is nothing to prove was rewritten at egress — just
+          // confirm the plugin can actually reach DuckDuckGo.
+          const probe = await runSandboxCommand(
+            deps,
+            sandboxName,
+            ["sh", "-lc", buildDuckDuckGoEgressProbeCommand()],
+            30_000,
+          );
+          if (!probe) {
+            warn("  ⚠ DuckDuckGo Search config exists, but the egress verification request failed.");
+            return true;
+          }
+          const statusMatch = probe.match(/(?:^|\n)HTTP_STATUS:(\d{3})(?:\n|$)/);
+          const status = statusMatch?.[1] || "unknown";
+          const body = probe.replace(/(?:^|\n)HTTP_STATUS:\d{3}\s*$/m, "").trim();
+          if (status === "200" && hasDuckDuckGoResult(body)) {
+            log("  ✓ DuckDuckGo Search egress verified inside sandbox");
+          } else if (status === "200" && isDuckDuckGoBotChallenge(body)) {
+            warn(
+              "  ⚠ DuckDuckGo returned a bot-detection challenge page instead of results.",
+            );
+            warn(
+              "    This is a known limitation of the unofficial DuckDuckGo integration — it scrapes",
+            );
+            warn(
+              "    DuckDuckGo's HTML results page, which occasionally rate-limits or challenges",
+            );
+            warn("    automated requests. Retry a real search from the agent to confirm.");
+          } else {
+            warn(
+              `  ⚠ DuckDuckGo Search config exists, but egress verification returned HTTP ${status}.`,
+            );
+          }
+          return true;
+        }
         if (provider !== "brave" && provider !== "tavily") {
           warn(`  ⚠ Web search provider '${String(provider)}' cannot be verified.`);
           return true;

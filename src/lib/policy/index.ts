@@ -532,7 +532,7 @@ function setupPolicyPresetSupported(
   name: string,
   options: SetupPolicyPresetSupportOptions = {},
 ): boolean {
-  const isWebSearchPreset = name === "brave" || name === "tavily";
+  const isWebSearchPreset = name === "brave" || name === "tavily" || name === "duckduckgo";
   return !isWebSearchPreset || options.webSearchSupported !== false;
 }
 

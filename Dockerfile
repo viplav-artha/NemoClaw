@@ -90,6 +90,7 @@ FROM scratch AS openclaw-optional-plugin-archives
 
 ADD --chmod=0444 --checksum=sha256:df2c7f5f880da6ab13a43d0cf2efdd8f196802db9ebbffb9492cf81d32b15a62 https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.9.1.tgz /diagnostics-otel-2026.9.1.tgz
 ADD --chmod=0444 --checksum=sha256:f679af12fa00947d994e6a8454aded205b5bf2454dce0674bff88f741dfb9af8 https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.1.tgz /brave-plugin-2026.9.1.tgz
+ADD --chmod=0444 --checksum=sha256:0706ebadb08a91fb688cf7819d750bb88ce1aa29a03e7f9d6fb3d782ae708778 https://registry.npmjs.org/@openclaw/duckduckgo-plugin/-/duckduckgo-plugin-2026.9.1.tgz /duckduckgo-plugin-2026.9.1.tgz
 
 # hadolint ignore=DL3006
 FROM codex-acp-${TARGETARCH}-archive AS codex-acp-platform-archive
@@ -712,6 +713,9 @@ ARG OPENCLAW_2026_9_1_INTEGRITY=sha512-0Ve0631CdgkJDwd4NNG1BawIdF5yCL2sO+Tts8amS
 ARG OPENCLAW_2026_9_1_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-2026.9.1.tgz
 ARG OPENCLAW_DIAGNOSTICS_OTEL_2026_9_1_INTEGRITY=sha512-3MWLli9L6HTVdrjqHmwOvNvIr6emsnuNQe4iE2sDqb8E5wn4Vq1rcsz+InL1YFudbStr089ZtS0tNAQ6qU+tnA==
 ARG OPENCLAW_BRAVE_PLUGIN_2026_9_1_INTEGRITY=sha512-4+j+eQTToV3k7Cb25MUL6h2uL8cJYyuLytfpd/sJK/HjR43dgKBqKpBsb1+I3w1Jr6PLpnjSf6/I3//3K0cdnA==
+# Verified against the published @openclaw/duckduckgo-plugin@2026.9.1 tarball's
+# own npm registry dist.integrity value.
+ARG OPENCLAW_DUCKDUCKGO_PLUGIN_2026_9_1_INTEGRITY=sha512-pDNyYWSsHWEZIGx0zFTXS4DhGVGCt3vpU2PnIwz5xPcGviVUE3elp/X8rWwp60v3OBsk1Fc/Hx2DRXHF3egZOg==
 # E2E-only legacy fixture pins used by stale-sandbox/rebuild tests that
 # intentionally build an older OpenClaw base image before proving upgrade
 # behavior. Production workflows reject the fixture flag, both legacy version
@@ -1826,6 +1830,7 @@ RUN --network=none --mount=from=openclaw-optional-plugin-archives,target=/opt/ne
         case "$plugin_spec" in \
             "@openclaw/diagnostics-otel@2026.9.1") expected_integrity="$OPENCLAW_DIAGNOSTICS_OTEL_2026_9_1_INTEGRITY"; expected_tarball="https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.9.1.tgz"; archive_name="diagnostics-otel-2026.9.1.tgz" ;; \
             "@openclaw/brave-plugin@2026.9.1") expected_integrity="$OPENCLAW_BRAVE_PLUGIN_2026_9_1_INTEGRITY"; expected_tarball="https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.1.tgz"; archive_name="brave-plugin-2026.9.1.tgz" ;; \
+            "@openclaw/duckduckgo-plugin@2026.9.1") expected_integrity="$OPENCLAW_DUCKDUCKGO_PLUGIN_2026_9_1_INTEGRITY"; expected_tarball="https://registry.npmjs.org/@openclaw/duckduckgo-plugin/-/duckduckgo-plugin-2026.9.1.tgz"; archive_name="duckduckgo-plugin-2026.9.1.tgz" ;; \
         esac; \
         if [ -z "$expected_integrity" ]; then \
             echo "ERROR: OpenClaw plugin ${plugin_spec} has no committed npm integrity pin" >&2; exit 1; \
@@ -1868,6 +1873,10 @@ RUN --network=none --mount=from=openclaw-optional-plugin-archives,target=/opt/ne
             tavily) \
                 openclaw plugins inspect tavily --json > /dev/null; \
                 TAVILY_API_KEY=openshell:resolve:env:TAVILY_API_KEY openclaw doctor --fix --non-interactive \
+                ;; \
+            duckduckgo) \
+                install_reviewed_openclaw_plugin "@openclaw/duckduckgo-plugin"; \
+                openclaw doctor --fix --non-interactive \
                 ;; \
             *) \
                 echo "ERROR: unsupported web-search provider: $NEMOCLAW_WEB_SEARCH_PROVIDER" >&2; \

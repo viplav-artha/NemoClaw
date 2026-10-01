@@ -123,7 +123,9 @@ export async function preparePolicyPresetResumeSelection(
       customOwnsObservability,
     });
   const liveBuiltinWebSearchProviderChanged = clampedLivePolicyPresets.some(
-    (name) => (name === "brave" || name === "tavily") && isStaleBuiltinWebSearch(name),
+    (name) =>
+      (name === "brave" || name === "tavily" || name === "duckduckgo") &&
+      isStaleBuiltinWebSearch(name),
   );
   let policyPresets = pruneDisabledMessagingPolicyPresets(
     clampedLivePolicyPresets.filter(

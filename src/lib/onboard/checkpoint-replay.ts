@@ -132,7 +132,7 @@ export function observeProviderEffectFingerprint(
 }
 
 export function requiredWebSearchProviderType(
-  provider: "brave" | "tavily",
+  provider: "brave" | "tavily" | "duckduckgo",
   agent: { name?: string } | null,
 ): string {
   return webSearchProviderProfileId(provider, agent?.name);

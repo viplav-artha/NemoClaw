@@ -22,7 +22,7 @@ export const OPENCLAW_CONFIG_RESTORE_OWNERSHIP = {
   /** Current generated entries win by id; backup-only user entries are kept. */
   currentGeneratedEntryMaps: ["plugins.entries"],
   /** Fresh web-search selection owns these bundled/external plugin entries. */
-  managedWebSearchPluginEntries: ["brave", "tavily"],
+  managedWebSearchPluginEntries: ["brave", "tavily", "duckduckgo"],
   /** Fresh web-search selection owns this path, including its absence. */
   managedWebSearchConfigPaths: ["tools.web.search"],
   /**
