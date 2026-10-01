@@ -757,6 +757,8 @@ export function openClawDoctorEnvOverrides(
       overrides.BRAVE_API_KEY = "openshell:resolve:env:BRAVE_API_KEY";
     } else if (provider === "tavily") {
       overrides.TAVILY_API_KEY = "openshell:resolve:env:TAVILY_API_KEY";
+    } else if (provider === "duckduckgo") {
+      // Keyless provider — no credential env to resolve or override.
     } else {
       throw new MessagingBuildApplierError(
         `Unsupported NEMOCLAW_WEB_SEARCH_PROVIDER: ${provider || "<empty>"}`,
@@ -2184,7 +2186,7 @@ function fatalMessagingBuildDiagnostic(error: unknown): string {
     return "Messaging build applier command failed.";
   }
   if (error instanceof MessagingBuildApplierError) {
-    return `Messaging build applier rejected invalid or unsafe input. TEMP-DEBUG: ${error.message}`;
+    return "Messaging build applier rejected invalid or unsafe input.";
   }
   return "Messaging build applier failed.";
 }
