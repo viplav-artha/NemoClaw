@@ -91,6 +91,9 @@ FROM scratch AS openclaw-optional-plugin-archives
 ADD --chmod=0444 --checksum=sha256:df2c7f5f880da6ab13a43d0cf2efdd8f196802db9ebbffb9492cf81d32b15a62 https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.9.1.tgz /diagnostics-otel-2026.9.1.tgz
 ADD --chmod=0444 --checksum=sha256:f679af12fa00947d994e6a8454aded205b5bf2454dce0674bff88f741dfb9af8 https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.1.tgz /brave-plugin-2026.9.1.tgz
 ADD --chmod=0444 --checksum=sha256:0706ebadb08a91fb688cf7819d750bb88ce1aa29a03e7f9d6fb3d782ae708778 https://registry.npmjs.org/@openclaw/duckduckgo-plugin/-/duckduckgo-plugin-2026.9.1.tgz /duckduckgo-plugin-2026.9.1.tgz
+ADD --chmod=0444 --checksum=sha256:d27c7b67fbf1361559a73d138a4a45aa821482ce99d42256bad814efc2464973 https://registry.npmjs.org/@openclaw/parallel-plugin/-/parallel-plugin-2026.9.1.tgz /parallel-plugin-2026.9.1.tgz
+ADD --chmod=0444 --checksum=sha256:f771519bec09c34a28afe24daa0a8d1581591f2aea4a329730b6409652cc591a https://registry.npmjs.org/@openclaw/firecrawl-plugin/-/firecrawl-plugin-2026.9.1.tgz /firecrawl-plugin-2026.9.1.tgz
+ADD --chmod=0444 --checksum=sha256:980efb650266a9aacdced1bbf910a139da9eb18964aa347f4a4a8cf4b1eab98d https://registry.npmjs.org/@openclaw/searxng-plugin/-/searxng-plugin-2026.9.1.tgz /searxng-plugin-2026.9.1.tgz
 
 # hadolint ignore=DL3006
 FROM codex-acp-${TARGETARCH}-archive AS codex-acp-platform-archive
@@ -716,6 +719,11 @@ ARG OPENCLAW_BRAVE_PLUGIN_2026_9_1_INTEGRITY=sha512-4+j+eQTToV3k7Cb25MUL6h2uL8cJ
 # Verified against the published @openclaw/duckduckgo-plugin@2026.9.1 tarball's
 # own npm registry dist.integrity value.
 ARG OPENCLAW_DUCKDUCKGO_PLUGIN_2026_9_1_INTEGRITY=sha512-pDNyYWSsHWEZIGx0zFTXS4DhGVGCt3vpU2PnIwz5xPcGviVUE3elp/X8rWwp60v3OBsk1Fc/Hx2DRXHF3egZOg==
+# Verified against each published plugin's own npm registry dist.integrity
+# value (parallel-plugin, firecrawl-plugin, searxng-plugin @2026.9.1).
+ARG OPENCLAW_PARALLEL_PLUGIN_2026_9_1_INTEGRITY=sha512-3hzX+apQfVWq0EdjCucUen+p1A9LLc4HsucrAOd4/gaEizi+9UtCCyXMb4O4QyZoHMJAPQxU+rInfM5VBgZRRQ==
+ARG OPENCLAW_FIRECRAWL_PLUGIN_2026_9_1_INTEGRITY=sha512-Qabuu3mxcqb3wUo7B/pIRyoBjsIfX+CHyM3mGEuwxX++Vlt9Yw8gNwEEoVsYDu3ag+iG3IcToKbb/i8LlPxnfw==
+ARG OPENCLAW_SEARXNG_PLUGIN_2026_9_1_INTEGRITY=sha512-UiZ0dwEXBIm4QqNwel17Xq56KZT4jWZzNu2k9OgqVdRQoAukZwaXKujwv64GD0bIyx/NbQrS5JTBrV3HWkrY7w==
 # E2E-only legacy fixture pins used by stale-sandbox/rebuild tests that
 # intentionally build an older OpenClaw base image before proving upgrade
 # behavior. Production workflows reject the fixture flag, both legacy version
@@ -1679,10 +1687,14 @@ ARG NEMOCLAW_DARWIN_VM_COMPAT=0
 # before running `nemoclaw onboard`. See #1409.
 ARG NEMOCLAW_PROXY_HOST=10.200.0.1
 ARG NEMOCLAW_PROXY_PORT=3128
-# Non-secret web-search selection from onboard. The actual API key is injected
-# at runtime via openshell:resolve:env, never baked into the image.
+# Non-secret web-search selection from onboard. A real secret (brave/tavily's
+# API key, ollama's optional API key) is injected at runtime via
+# openshell:resolve:env, never baked into the image. SEARXNG_BASE_URL is the
+# one exception: it is not a secret — the user's own self-hosted instance
+# address — so it is baked directly as a literal build-time value instead.
 ARG NEMOCLAW_WEB_SEARCH_ENABLED=0
 ARG NEMOCLAW_WEB_SEARCH_PROVIDER=brave
+ARG SEARXNG_BASE_URL=
 ARG NEMOCLAW_OPENCLAW_OTEL=0
 # The default local OTEL endpoint is intentionally the single host-gateway
 # collector path covered by the openclaw-diagnostics-otel-local policy preset.
@@ -1877,6 +1889,31 @@ RUN --network=none --mount=from=openclaw-optional-plugin-archives,target=/opt/ne
             duckduckgo) \
                 install_reviewed_openclaw_plugin "@openclaw/duckduckgo-plugin"; \
                 openclaw doctor --fix --non-interactive \
+                ;; \
+            parallel-free) \
+                install_reviewed_openclaw_plugin "@openclaw/parallel-plugin"; \
+                openclaw doctor --fix --non-interactive \
+                ;; \
+            firecrawl-free) \
+                install_reviewed_openclaw_plugin "@openclaw/firecrawl-plugin"; \
+                openclaw doctor --fix --non-interactive \
+                ;; \
+            searxng) \
+                install_reviewed_openclaw_plugin "@openclaw/searxng-plugin"; \
+                # SEARXNG_BASE_URL is not a secret — already baked into
+                # openclaw.json as a literal value by generate-openclaw-config.mts,
+                # not an openshell:resolve:env placeholder, so no override is
+                # needed here. \
+                openclaw doctor --fix --non-interactive \
+                ;; \
+            ollama) \
+                # No separate @openclaw/ollama-plugin package could be found or
+                # verified on the npm registry (unlike every other provider
+                # above) — nothing to install here. A locally signed-in Ollama
+                # instance needs no key; OLLAMA_API_KEY (if set) is still
+                # resolved so doctor can pick it up if OpenClaw's bundled
+                # Ollama support reads it directly from the environment. \
+                OLLAMA_API_KEY=openshell:resolve:env:OLLAMA_API_KEY openclaw doctor --fix --non-interactive \
                 ;; \
             *) \
                 echo "ERROR: unsupported web-search provider: $NEMOCLAW_WEB_SEARCH_PROVIDER" >&2; \

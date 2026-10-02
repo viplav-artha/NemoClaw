@@ -9,6 +9,7 @@ import {
   normalizeInferenceSelection,
 } from "../inference/selection";
 import { parseServingProfileProvenance } from "../inference/serving/profile-provenance";
+import { isWebSearchProvider } from "../inference/web-search";
 import { normalizeToolDisclosure } from "../tool-disclosure";
 import {
   cloneSandboxHostLocalInferenceProvenance,
@@ -504,10 +505,7 @@ export function registerSandbox(
         ? entry.dcodeAutoApprovalMode
         : undefined,
       webSearchProvider:
-        entry.webSearchEnabled === true &&
-        (entry.webSearchProvider === "brave" ||
-          entry.webSearchProvider === "tavily" ||
-          entry.webSearchProvider === "duckduckgo")
+        entry.webSearchEnabled === true && isWebSearchProvider(entry.webSearchProvider)
           ? entry.webSearchProvider
           : null,
       agent: entry.agent || null,

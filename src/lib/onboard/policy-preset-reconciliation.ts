@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
+import {
+  isWebSearchProvider,
+  type WebSearchConfig,
+  webSearchProviderForConfig,
+} from "../inference/web-search";
 import {
   filterSetupPolicyPresetNamesForAgent,
   setupPolicyPresetAppliesToAgent,
@@ -135,7 +139,7 @@ export function isStaleBuiltinWebSearchPolicyPreset(
       options.webSearchConfig && webSearchProviderForConfig(options.webSearchConfig) === "tavily",
     );
   }
-  if (name !== "brave" && name !== "tavily" && name !== "duckduckgo") return false;
+  if (!isWebSearchProvider(name)) return false;
   if (!options.webSearchConfig) return true;
   return name !== webSearchProviderForConfig(options.webSearchConfig);
 }
