@@ -582,6 +582,16 @@ export function patchStagedDockerfile(
     /^ARG NEMOCLAW_WEB_SEARCH_PROVIDER=.*$/m,
     `ARG NEMOCLAW_WEB_SEARCH_PROVIDER=${sanitizeDockerArg(webSearchProviderForConfig(webSearchConfig))}`,
   );
+  // Not a secret — the user's own self-hosted SearXNG instance URL is baked
+  // as a literal build-time value (see scripts/generate-openclaw-config.mts),
+  // unlike every other provider's real API key.
+  const searxngBaseUrlEnv = process.env.SEARXNG_BASE_URL;
+  if (webSearchProviderForConfig(webSearchConfig) === "searxng" && searxngBaseUrlEnv) {
+    dockerfile = dockerfile.replace(
+      /^ARG SEARXNG_BASE_URL=.*$/m,
+      `ARG SEARXNG_BASE_URL=${sanitizeDockerArg(searxngBaseUrlEnv)}`,
+    );
+  }
   // These four ARGs configure OpenClaw's own diagnostics exporter and are
   // declared only by the OpenClaw Dockerfile. Another agent's staged Dockerfile
   // is not missing them, so report the agent mismatch the way the managed

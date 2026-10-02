@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { cloneAndDeepFreeze } from "../../core/immutable";
 import { rebindLoopbackDashboardUrlPort } from "../../dashboard/url";
 import { resolveContextWindowForModel } from "../../inference/context-window";
+import { isWebSearchProvider } from "../../inference/web-search";
 import { rebindSandboxMessagingPlanForClone } from "../../messaging/clone-rebind";
 import { isValidName } from "../../name-validation";
 import { DEFAULT_TOOL_DISCLOSURE } from "../../tool-disclosure";
@@ -191,15 +192,14 @@ function currentWebSearch(
   if (
     configuredProvider !== undefined &&
     configuredProvider !== null &&
-    configuredProvider !== "brave" &&
-    configuredProvider !== "tavily"
+    !isWebSearchProvider(configuredProvider)
   ) {
     fail("current source web-search provider is invalid");
   }
   const provider = enabled
     ? configuredProvider
     : (configuredProvider ?? profile.agentConfig.webSearch.provider);
-  if (provider !== "brave" && provider !== "tavily") {
+  if (!isWebSearchProvider(provider)) {
     fail("enabled current source web search has no valid provider");
   }
   if (profile.agent === "hermes" && provider !== "tavily") {

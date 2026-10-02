@@ -1,0 +1,21 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: ollama
+  description: "Ollama hosted web search access (https://ollama.com) — for a locally signed-in Ollama instance's own serving port, combine with the local-inference preset instead"
+
+network_policies:
+  ollama:
+    name: ollama
+    endpoints:
+      - host: ollama.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+    binaries:
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/node }
