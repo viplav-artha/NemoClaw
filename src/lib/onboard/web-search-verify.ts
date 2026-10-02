@@ -6,14 +6,7 @@ import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/opensh
 import { selectedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
 import { shellQuote } from "../core/shell-quote";
 
-export type WebSearchVerifyProvider =
-  | "brave"
-  | "tavily"
-  | "duckduckgo"
-  | "parallel-free"
-  | "firecrawl-free"
-  | "searxng"
-  | "ollama";
+export type WebSearchVerifyProvider = "brave" | "tavily" | "duckduckgo";
 
 export type WebSearchVerifyAgent =
   | {
@@ -206,84 +199,6 @@ function hasDuckDuckGoResult(body: string): boolean {
 function isDuckDuckGoBotChallenge(body: string): boolean {
   if (hasDuckDuckGoResult(body)) return false;
   return /g-recaptcha|are you a human|id="challenge-form"|name="challenge"/i.test(body);
-}
-
-// Endpoint confirmed from the real @openclaw/parallel-plugin@2026.9.1 source
-// (extensions/parallel/src/parallel-free-web-search-provider.runtime.ts):
-// PARALLEL_MCP_SEARCH_URL = https://search.parallel.ai/mcp. No API key — the
-// free tier is a hosted MCP endpoint reachable with no auth header.
-function buildParallelFreeEgressProbeCommand(): string {
-  return [
-    "curl",
-    "-sS",
-    "--compressed",
-    "--max-time",
-    "20",
-    "-X",
-    "POST",
-    "https://search.parallel.ai/mcp",
-    "-H",
-    "Content-Type: application/json",
-    "-H",
-    "Accept: application/json, text/event-stream",
-    "--data",
-    JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "tools/call",
-      params: { name: "web_search_preview", arguments: { objective: "NVIDIA" } },
-    }),
-    "-w",
-    "\nHTTP_STATUS:%{http_code}\n",
-  ]
-    .map(shellQuote)
-    .join(" ");
-}
-
-// Endpoint and path confirmed from the real @openclaw/firecrawl-plugin@2026.9.1
-// source (extensions/firecrawl/src/firecrawl-client.ts): default base URL
-// https://api.firecrawl.dev, search path /v2/search. No API key for the free
-// tier — this is a plain reachability/shape probe.
-function buildFirecrawlFreeEgressProbeCommand(): string {
-  return [
-    "curl",
-    "-sS",
-    "--compressed",
-    "--max-time",
-    "20",
-    "-X",
-    "POST",
-    "https://api.firecrawl.dev/v2/search",
-    "-H",
-    "Content-Type: application/json",
-    "--data",
-    JSON.stringify({ query: "NVIDIA", limit: 1 }),
-    "-w",
-    "\nHTTP_STATUS:%{http_code}\n",
-  ]
-    .map(shellQuote)
-    .join(" ");
-}
-
-function hasFirecrawlResult(body: string): boolean {
-  try {
-    const parsed = JSON.parse(body);
-    return Array.isArray(parsed?.data?.web) || Array.isArray(parsed?.data);
-  } catch {
-    return false;
-  }
-}
-
-// SearXNG's host is the user's own self-hosted instance (no fixed hostname
-// exists to probe from here) — baseUrl is read back from openclaw.json at
-// call sites below. Ollama's remote search endpoint shape beyond the
-// connectivity-only check done at onboarding time is not documented publicly;
-// this probe only confirms https://ollama.com answers, the same best-effort
-// standard applied in web-search-flow.ts's credential validator.
-function buildInstanceEgressProbeCommand(searchUrl: string): string {
-  return ["curl", "-sS", "--max-time", "20", "-G", searchUrl, "--data-urlencode", "q=NVIDIA"]
-    .map(shellQuote)
-    .join(" ");
 }
 
 function hasBraveResult(body: string): boolean {
@@ -524,95 +439,6 @@ export async function verifyWebSearchInsideSandbox(
               `  ⚠ DuckDuckGo Search config exists, but egress verification returned HTTP ${status}.`,
             );
           }
-          return true;
-        }
-        if (provider === "parallel-free") {
-          const probe = await runSandboxCommand(
-            deps,
-            sandboxName,
-            ["sh", "-lc", buildParallelFreeEgressProbeCommand()],
-            30_000,
-          );
-          const statusMatch = probe?.match(/(?:^|\n)HTTP_STATUS:(\d{3})(?:\n|$)/);
-          const status = statusMatch?.[1] || "unknown";
-          if (status === "200") {
-            log("  ✓ Parallel Search (Free) egress verified inside sandbox");
-          } else {
-            warn(
-              `  ⚠ Parallel Search (Free) config exists, but egress verification returned HTTP ${status}.`,
-            );
-          }
-          return true;
-        }
-        if (provider === "firecrawl-free") {
-          const probe = await runSandboxCommand(
-            deps,
-            sandboxName,
-            ["sh", "-lc", buildFirecrawlFreeEgressProbeCommand()],
-            30_000,
-          );
-          if (!probe) {
-            warn(
-              "  ⚠ Firecrawl Search (Free) config exists, but the egress verification request failed.",
-            );
-            return true;
-          }
-          const statusMatch = probe.match(/(?:^|\n)HTTP_STATUS:(\d{3})(?:\n|$)/);
-          const status = statusMatch?.[1] || "unknown";
-          const body = probe.replace(/(?:^|\n)HTTP_STATUS:\d{3}\s*$/m, "").trim();
-          if (status === "200" && hasFirecrawlResult(body)) {
-            log("  ✓ Firecrawl Search (Free) egress verified inside sandbox");
-          } else {
-            warn(
-              `  ⚠ Firecrawl Search (Free) config exists, but egress verification returned HTTP ${status}.`,
-            );
-          }
-          return true;
-        }
-        if (provider === "searxng") {
-          const baseUrl = parsed?.plugins?.entries?.searxng?.config?.webSearch?.baseUrl;
-          if (typeof baseUrl !== "string" || !baseUrl.trim()) {
-            warn("  ⚠ SearXNG is enabled but no instance URL is configured; cannot verify egress.");
-            return true;
-          }
-          let searchUrl: string;
-          try {
-            const parsedBase = new URL(baseUrl.trim());
-            const probeUrl = new URL(
-              parsedBase.pathname.endsWith("/search")
-                ? parsedBase.pathname
-                : `${parsedBase.pathname.replace(/\/$/, "")}/search`,
-              parsedBase,
-            );
-            probeUrl.searchParams.set("format", "json");
-            searchUrl = probeUrl.toString();
-          } catch {
-            warn(`  ⚠ SearXNG instance URL '${baseUrl}' is not a valid URL; cannot verify egress.`);
-            return true;
-          }
-          const probe = await runSandboxCommand(
-            deps,
-            sandboxName,
-            ["sh", "-lc", buildInstanceEgressProbeCommand(searchUrl)],
-            30_000,
-          );
-          if (probe) {
-            log("  ✓ SearXNG instance reachable from inside sandbox");
-          } else {
-            warn(
-              "  ⚠ SearXNG is configured, but the sandbox could not reach the instance. Confirm it is",
-            );
-            warn("    reachable through host.openshell.internal and the matching network policy preset");
-            warn("    is applied (nemoclaw-blueprint/policies/presets/searxng.yaml).");
-          }
-          return true;
-        }
-        if (provider === "ollama") {
-          // Local, signed-in Ollama use has no credential to verify; remote
-          // https://ollama.com search is a best-effort connectivity check
-          // only, same standard as the onboarding-time validator.
-          log("  ℹ Ollama Web Search is configured. Local use relies on an existing Ollama sign-in");
-          log("    that this probe cannot verify; retry a real search from the agent to confirm.");
           return true;
         }
         if (provider !== "brave" && provider !== "tavily") {

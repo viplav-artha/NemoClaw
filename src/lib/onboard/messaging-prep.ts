@@ -134,41 +134,28 @@ export async function prepareCreateSandboxMessaging(
   const webSearchCredentialEnv = webSearch.webSearchEnvFor(webSearchProvider);
   const webSearchProviderType = webSearchProviderProfileId(webSearchProvider, input.agentName);
   const webSearchProviderName = `${input.sandboxName}-${webSearchProvider}-search`;
-  // A keyless provider (DuckDuckGo, Parallel Search Free, Firecrawl Search
-  // Free) has no credential env at all. SearXNG's env slot is a non-secret
-  // literal baked directly into the image (see
-  // scripts/generate-openclaw-config.mts), not a gateway-resolved secret, so
-  // it also skips every OpenShell provider-registration step below.
-  const webSearchUsesGatewayCredential =
-    webSearchEnabled && webSearchCredentialEnv !== null && webSearchProvider !== "searxng";
-  const webSearchApiKey = webSearchUsesGatewayCredential
-    ? input.getCredential(webSearchCredentialEnv as string) ||
-      input.normalizeCredentialValue(input.env[webSearchCredentialEnv as string]) ||
+  // A keyless provider (DuckDuckGo) has no credential env to resolve, register
+  // an OpenShell provider for, or check reuse against — none of the
+  // credential-registration steps below apply to it.
+  const webSearchNeedsCredential = webSearchEnabled && webSearchCredentialEnv !== null;
+  const webSearchApiKey = webSearchNeedsCredential
+    ? input.getCredential(webSearchCredentialEnv) ||
+      input.normalizeCredentialValue(input.env[webSearchCredentialEnv]) ||
       null
     : null;
   const reusableWebSearchProvider =
     requiresExactOpenClawProviderBinding &&
-    webSearchUsesGatewayCredential &&
+    webSearchNeedsCredential &&
     !webSearchApiKey &&
     (await input.providerMatchesGatewayCredential(
       webSearchProviderName,
       webSearchProviderType,
-      webSearchCredentialEnv as string,
+      webSearchCredentialEnv,
     ));
-  // Ollama's credential is optional — a locally signed-in instance needs no
-  // key at all — unlike Brave/Tavily, where an absent credential must block
-  // onboarding. Only a genuinely required credential blocks here.
-  const webSearchCredentialRequired =
-    webSearchUsesGatewayCredential && webSearch.isWebSearchCredentialRequired(webSearchProvider);
   const missingWebSearchCredentialEnv =
-    webSearchCredentialRequired && !webSearchApiKey && !reusableWebSearchProvider
+    webSearchNeedsCredential && !webSearchApiKey && !reusableWebSearchProvider
       ? webSearchCredentialEnv
       : null;
-  // Only register a gateway provider when there is something to register: a
-  // real token, or an existing gateway binding to reuse. Ollama with neither
-  // (optional, local-only use) correctly registers nothing.
-  const webSearchNeedsCredential =
-    webSearchUsesGatewayCredential && Boolean(webSearchApiKey || reusableWebSearchProvider);
   if (missingWebSearchCredentialEnv) {
     return {
       disabledChannelNames,

@@ -485,11 +485,7 @@ function requiredWebSearchProviderBindings(
   const credentialEnv = webSearchEnvFor(provider);
   // A keyless provider (DuckDuckGo) brokers no OpenShell credential, so there
   // is no provider binding to checkpoint or replay for it.
-  // SearXNG's env slot (SEARXNG_BASE_URL) is a non-secret literal value baked
-  // directly into the image (see scripts/generate-openclaw-config.mts) —
-  // unlike every other provider with a credentialEnv, it has no OpenShell
-  // provider-profile and nothing to checkpoint/replay as a gateway binding.
-  if (!credentialEnv || provider === "searxng") return [];
+  if (!credentialEnv || provider === "duckduckgo") return [];
   return [
     {
       name: `${sandboxName}-${provider}-search`,

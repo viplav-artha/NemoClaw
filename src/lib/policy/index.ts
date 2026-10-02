@@ -9,8 +9,6 @@ import readline from "node:readline";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
-import { isWebSearchProvider } from "../inference/web-search";
-
 import {
   openshellNotFoundDiagnosticLines,
   namedOpenShellGateway,
@@ -534,7 +532,7 @@ function setupPolicyPresetSupported(
   name: string,
   options: SetupPolicyPresetSupportOptions = {},
 ): boolean {
-  const isWebSearchPreset = isWebSearchProvider(name);
+  const isWebSearchPreset = name === "brave" || name === "tavily" || name === "duckduckgo";
   return !isWebSearchPreset || options.webSearchSupported !== false;
 }
 
