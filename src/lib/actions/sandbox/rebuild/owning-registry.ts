@@ -142,12 +142,16 @@ function rebuildCredentialEnvNames(entry: SandboxEntry): readonly string[] {
   const names = new Set<string>();
   if (entry.credentialEnv) names.add(entry.credentialEnv);
   const webSearchProvider =
-    entry.webSearchProvider === "brave" || entry.webSearchProvider === "tavily"
+    entry.webSearchProvider === "brave" ||
+    entry.webSearchProvider === "tavily" ||
+    entry.webSearchProvider === "duckduckgo"
       ? entry.webSearchProvider
       : entry.webSearchEnabled === true
         ? "brave"
         : null;
-  if (webSearchProvider) names.add(webSearchEnvFor(webSearchProvider));
+  // DuckDuckGo is keyless — no credential env to snapshot for it.
+  const webSearchCredentialEnv = webSearchProvider ? webSearchEnvFor(webSearchProvider) : null;
+  if (webSearchCredentialEnv) names.add(webSearchCredentialEnv);
   for (const binding of getMessagingPlanFromEntry(entry)?.credentialBindings ?? []) {
     names.add(binding.providerEnvKey);
   }

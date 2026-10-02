@@ -11,6 +11,7 @@ import type { InferenceEndpointSource } from "../../../inference/selection";
 import {
   parseExplicitWebSearchProvider,
   type WebSearchConfig as SharedWebSearchConfig,
+  type WebSearchProvider as SharedWebSearchProvider,
   WEB_SEARCH_PROVIDER_ENV,
   webSearchConfigsEqual,
   webSearchEnvFor,
@@ -245,7 +246,7 @@ export interface SandboxStateOptions<
     ): boolean;
     agentSupportsWebSearchProvider?(
       agent: Agent,
-      provider: "brave" | "tavily",
+      provider: SharedWebSearchProvider,
       dockerfilePathOverride: string | null,
       rootDir: string,
     ): boolean;
@@ -456,7 +457,7 @@ function missingWebSearchFidelity(
 
 function knownAgentSupportsWebSearchProvider(
   agent: { name?: string } | null,
-  provider: "brave" | "tavily",
+  provider: SharedWebSearchProvider,
 ): boolean {
   return agent?.name?.trim().toLowerCase() !== "hermes" || provider === "tavily";
 }
@@ -481,11 +482,15 @@ function requiredWebSearchProviderBindings(
 ): CheckpointProviderBinding[] {
   if (webSearchConfig?.fetchEnabled !== true) return [];
   const provider = webSearchProviderForConfig(webSearchConfig);
+  const credentialEnv = webSearchEnvFor(provider);
+  // A keyless provider (DuckDuckGo) brokers no OpenShell credential, so there
+  // is no provider binding to checkpoint or replay for it.
+  if (!credentialEnv || provider === "duckduckgo") return [];
   return [
     {
       name: `${sandboxName}-${provider}-search`,
       type: requiredWebSearchProviderType(provider, agent),
-      credentialEnv: webSearchEnvFor(provider),
+      credentialEnv,
     },
   ];
 }
@@ -1398,8 +1403,12 @@ class SandboxStateFlow<
     );
     const label = webSearchLabelFor(provider);
     const credentialEnv = webSearchEnvFor(provider);
-    const localCredential = this.options.env[credentialEnv]?.trim();
+    // A keyless provider (DuckDuckGo) has no gateway credential to reuse on
+    // resume; fall straight through to revalidation below, which is a no-op
+    // success for it.
+    const localCredential = credentialEnv ? this.options.env[credentialEnv]?.trim() : undefined;
     if (
+      credentialEnv &&
       this.resumesSandboxPrompts &&
       this.options.resume &&
       state.sandboxName &&

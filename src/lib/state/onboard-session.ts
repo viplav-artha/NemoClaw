@@ -1713,8 +1713,11 @@ function retainedSandboxResourceEvidence(session: Session) {
     sandboxScopedProviders: session.stagedCredentialProviders,
     credentialEnvironmentVariables: [
       ...(session.credentialEnv ? [session.credentialEnv] : []),
+      // A keyless provider (DuckDuckGo) has no credential env var to retain.
       ...(session.webSearchConfig
-        ? [webSearchEnvFor(webSearchProviderForConfig(session.webSearchConfig))]
+        ? ([webSearchEnvFor(webSearchProviderForConfig(session.webSearchConfig))].filter(
+            (envKey): envKey is string => envKey !== null,
+          ) as string[])
         : []),
       ...messagingCredentialEnvironmentVariables,
     ],

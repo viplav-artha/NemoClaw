@@ -38,7 +38,7 @@ export function parseExplicitWebSearchProvider(
     return { specified: true, provider: null };
   }
   throw new Error(
-    `Unsupported ${WEB_SEARCH_PROVIDER_ENV}: ${value}. Valid values: brave, tavily, none.`,
+    `Unsupported ${WEB_SEARCH_PROVIDER_ENV}: ${value}. Valid values: brave, tavily, duckduckgo, none.`,
   );
 }
 
@@ -52,12 +52,20 @@ export function webSearchProviderForConfig(
   return normalizeWebSearchProvider(config?.provider);
 }
 
-export function webSearchEnvFor(provider: WebSearchProvider): string {
+/**
+ * DuckDuckGo is a keyless provider (no OpenShell credential provider, no
+ * process env var) — callers must handle the `null` case instead of assuming
+ * every provider brokers exactly one API key.
+ */
+export function webSearchEnvFor(provider: WebSearchProvider): string | null {
+  if (provider === "duckduckgo") return null;
   return provider === "tavily" ? TAVILY_API_KEY_ENV : BRAVE_API_KEY_ENV;
 }
 
 export function webSearchLabelFor(provider: WebSearchProvider): string {
-  return provider === "tavily" ? "Tavily Search" : "Brave Search";
+  if (provider === "tavily") return "Tavily Search";
+  if (provider === "duckduckgo") return "DuckDuckGo Search";
+  return "Brave Search";
 }
 
 export function webSearchProviderForEnvKey(envKey: string): WebSearchProvider | null {

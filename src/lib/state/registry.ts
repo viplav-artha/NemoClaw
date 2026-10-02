@@ -505,7 +505,9 @@ export function registerSandbox(
         : undefined,
       webSearchProvider:
         entry.webSearchEnabled === true &&
-        (entry.webSearchProvider === "brave" || entry.webSearchProvider === "tavily")
+        (entry.webSearchProvider === "brave" ||
+          entry.webSearchProvider === "tavily" ||
+          entry.webSearchProvider === "duckduckgo")
           ? entry.webSearchProvider
           : null,
       agent: entry.agent || null,

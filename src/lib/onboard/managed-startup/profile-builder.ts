@@ -32,6 +32,7 @@ import {
   type ManagedStartupReasoningEffort,
   type ManagedStartupToolDisclosure,
   type ManagedStartupWebSearch,
+  type ManagedStartupWebSearchProvider,
   validateManagedStartupProfile,
 } from "./profile";
 
@@ -95,7 +96,7 @@ export interface ManagedStartupProfileBuilderInput {
   readonly dashboard: ManagedStartupDashboard;
   readonly webSearch: {
     readonly fetchEnabled: boolean;
-    readonly provider?: "brave" | "tavily";
+    readonly provider?: ManagedStartupWebSearchProvider;
   } | null;
   readonly toolDisclosure: ManagedStartupToolDisclosure;
   readonly hermesToolGateways: readonly string[];

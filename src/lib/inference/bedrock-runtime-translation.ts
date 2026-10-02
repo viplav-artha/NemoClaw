@@ -120,14 +120,21 @@ export function parseJsonObject(value: string, label: string): JsonObject {
   }
 }
 
+// Bedrock Converse only accepts a JSON object in toolResult `json` blocks;
+// arrays, strings, numbers and null are rejected ("Provide a json object"),
+// so anything other than a plain object is passed through as text.
 function maybeJsonToolResult(value: string): { json: unknown } | { text: string } {
   const trimmed = value.trim();
   if (!trimmed) return { text: "" };
   try {
-    return { json: JSON.parse(trimmed) };
+    const parsed = JSON.parse(trimmed);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return { json: parsed };
+    }
   } catch {
-    return { text: value };
+    // Not JSON; fall through to text.
   }
+  return { text: value };
 }
 
 function textFromOpenAiContent(content: unknown, label: string): string {

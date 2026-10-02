@@ -99,6 +99,9 @@ const FALSE_VALUES = new Set(["0", "false", "no", "off"]);
 const WEB_SEARCH_PROVIDERS = {
   brave: { credentialEnv: "BRAVE_API_KEY" },
   tavily: { credentialEnv: "TAVILY_API_KEY" },
+  // Keyless: @openclaw/duckduckgo-plugin declares requiresCredential: false
+  // and an empty envVars list — there is no OpenShell credential to resolve.
+  duckduckgo: { credentialEnv: null },
 } as const;
 type WebSearchProvider = keyof typeof WEB_SEARCH_PROVIDERS;
 const DEFAULT_OPENCLAW_OTEL_ENDPOINT = "http://host.openshell.internal:4318";
@@ -144,9 +147,9 @@ function isObject(value: unknown): value is JsonObject {
 
 function resolveWebSearchProvider(env: Env): WebSearchProvider {
   const provider = (env.NEMOCLAW_WEB_SEARCH_PROVIDER || "brave").trim();
-  if (provider === "brave" || provider === "tavily") return provider;
+  if (provider === "brave" || provider === "tavily" || provider === "duckduckgo") return provider;
   throw new Error(
-    `NEMOCLAW_WEB_SEARCH_PROVIDER must be "brave" or "tavily", got ${JSON.stringify(provider)}`,
+    `NEMOCLAW_WEB_SEARCH_PROVIDER must be "brave", "tavily", or "duckduckgo", got ${JSON.stringify(provider)}`,
   );
 }
 
@@ -1103,15 +1106,20 @@ export function buildConfig(env: Env = process.env): JsonObject {
   if (webSearchProvider) {
     // OpenClaw 2026.5.x keeps provider-owned credentials under
     // plugins.entries.<provider>.config rather than inline on tools.web.search.
-    // Both providers use the same plugin-scoped configuration shape.
+    // Credentialed providers (brave, tavily) use the same plugin-scoped
+    // apiKey shape. DuckDuckGo (@openclaw/duckduckgo-plugin) declares
+    // requiresCredential: false and its configSchema has no apiKey property
+    // at all (additionalProperties: false), so it must not receive one.
     const credentialEnv = WEB_SEARCH_PROVIDERS[webSearchProvider].credentialEnv;
     tools.web.search = { enabled: true, provider: webSearchProvider };
-    config.plugins.entries[webSearchProvider] = {
-      enabled: true,
-      config: {
-        webSearch: { apiKey: `openshell:resolve:env:${credentialEnv}` },
-      },
-    };
+    config.plugins.entries[webSearchProvider] = credentialEnv
+      ? {
+          enabled: true,
+          config: {
+            webSearch: { apiKey: `openshell:resolve:env:${credentialEnv}` },
+          },
+        }
+      : { enabled: true };
   }
 
   return config;

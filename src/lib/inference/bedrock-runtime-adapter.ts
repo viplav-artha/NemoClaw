@@ -284,6 +284,7 @@ export function createBedrockRuntimeAdapterServer(options: {
         status,
         code,
         durationMs: Date.now() - started,
+        tempDebugMessage: compactText(safeErrorMessage(err)),
       });
       if (!res.headersSent) {
         sendError(res, err);

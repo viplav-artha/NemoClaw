@@ -134,14 +134,18 @@ export async function prepareCreateSandboxMessaging(
   const webSearchCredentialEnv = webSearch.webSearchEnvFor(webSearchProvider);
   const webSearchProviderType = webSearchProviderProfileId(webSearchProvider, input.agentName);
   const webSearchProviderName = `${input.sandboxName}-${webSearchProvider}-search`;
-  const webSearchApiKey = webSearchEnabled
+  // A keyless provider (DuckDuckGo) has no credential env to resolve, register
+  // an OpenShell provider for, or check reuse against — none of the
+  // credential-registration steps below apply to it.
+  const webSearchNeedsCredential = webSearchEnabled && webSearchCredentialEnv !== null;
+  const webSearchApiKey = webSearchNeedsCredential
     ? input.getCredential(webSearchCredentialEnv) ||
       input.normalizeCredentialValue(input.env[webSearchCredentialEnv]) ||
       null
     : null;
   const reusableWebSearchProvider =
     requiresExactOpenClawProviderBinding &&
-    webSearchEnabled &&
+    webSearchNeedsCredential &&
     !webSearchApiKey &&
     (await input.providerMatchesGatewayCredential(
       webSearchProviderName,
@@ -149,7 +153,7 @@ export async function prepareCreateSandboxMessaging(
       webSearchCredentialEnv,
     ));
   const missingWebSearchCredentialEnv =
-    webSearchEnabled && !webSearchApiKey && !reusableWebSearchProvider
+    webSearchNeedsCredential && !webSearchApiKey && !reusableWebSearchProvider
       ? webSearchCredentialEnv
       : null;
   if (missingWebSearchCredentialEnv) {
@@ -165,7 +169,7 @@ export async function prepareCreateSandboxMessaging(
     };
   }
 
-  if (webSearchEnabled) {
+  if (webSearchNeedsCredential) {
     messagingTokenDefs.push({
       name: webSearchProviderName,
       envKey: webSearchCredentialEnv,

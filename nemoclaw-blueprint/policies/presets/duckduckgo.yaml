@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: duckduckgo
+  description: "DuckDuckGo web search access (experimental, keyless)"
+
+network_policies:
+  duckduckgo:
+    name: duckduckgo
+    endpoints:
+      # Confirmed from @openclaw/duckduckgo-plugin@2026.9.1 source
+      # (extensions/duckduckgo/src/ddg-client.ts): the plugin scrapes
+      # DuckDuckGo's non-JavaScript HTML results page at this single
+      # endpoint (GET https://html.duckduckgo.com/html?q=...&kl=...&kp=...).
+      # There is no official API and no API key.
+      - host: html.duckduckgo.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/html" }
+    binaries:
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/node }

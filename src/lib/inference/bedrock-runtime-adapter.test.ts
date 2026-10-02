@@ -226,6 +226,36 @@ describe("Bedrock Runtime OpenAI adapter", () => {
     expect(chunks.at(-1)?.choices[0].finish_reason).toBe("tool_calls");
   });
 
+  it.each([
+    ["array", '[{"title":"a","url":"https://example.com"}]'],
+    ["string", '"plain"'],
+    ["number", "42"],
+    ["null", "null"],
+  ])("sends non-object JSON tool results (%s) as text, not json", (_label, content) => {
+    const input = buildBedrockConverseRequest({
+      model: "amazon.nova-pro-v1:0",
+      messages: [
+        { role: "user", content: "search" },
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: "toolu_1",
+              type: "function",
+              function: { name: "web_search", arguments: '{"query":"nvidia"}' },
+            },
+          ],
+        },
+        { role: "tool", tool_call_id: "toolu_1", content },
+      ],
+    });
+
+    expect(input.messages?.[2]?.content?.[0]).toEqual({
+      toolResult: { toolUseId: "toolu_1", content: [{ text: content }] },
+    });
+  });
+
   it("round-trips tool calls and tool results", async () => {
     const input = buildBedrockConverseRequest({
       model: "anthropic.claude-3-5-sonnet-20240620-v1:0",

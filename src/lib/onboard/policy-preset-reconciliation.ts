@@ -135,7 +135,7 @@ export function isStaleBuiltinWebSearchPolicyPreset(
       options.webSearchConfig && webSearchProviderForConfig(options.webSearchConfig) === "tavily",
     );
   }
-  if (name !== "brave" && name !== "tavily") return false;
+  if (name !== "brave" && name !== "tavily" && name !== "duckduckgo") return false;
   if (!options.webSearchConfig) return true;
   return name !== webSearchProviderForConfig(options.webSearchConfig);
 }

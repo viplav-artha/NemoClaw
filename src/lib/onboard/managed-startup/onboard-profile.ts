@@ -12,6 +12,7 @@ import {
   MANAGED_STARTUP_PROFILE_CAPABILITIES,
   type ManagedStartupAgent,
   type ManagedStartupDashboard,
+  type ManagedStartupWebSearchProvider,
 } from "./profile";
 import {
   type BuiltManagedStartupProfile,
@@ -68,7 +69,7 @@ export interface ManagedStartupOnboardProfileInput {
   readonly hermesDashboardState: HermesDashboardOnboardState;
   readonly webSearch: {
     readonly fetchEnabled: boolean;
-    readonly provider?: "brave" | "tavily";
+    readonly provider?: ManagedStartupWebSearchProvider;
   } | null;
   readonly toolDisclosure: ToolDisclosure;
   readonly hermesToolGateways: readonly string[];

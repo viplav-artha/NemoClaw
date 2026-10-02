@@ -439,7 +439,8 @@ describe("configureWebSearch (interactive)", () => {
     expect(payload.braveKey).toBeNull();
     expect(payload.errors).toEqual([]);
     expect(payload.saved.every((entry) => entry.value !== "back")).toBe(true);
-    expect(payload.prompts.filter((entry) => /Choose \[1-3\]:/.test(entry.message))).toHaveLength(
+    // 4 choices: no web search, plus brave/tavily/duckduckgo.
+    expect(payload.prompts.filter((entry) => /Choose \[1-4\]:/.test(entry.message))).toHaveLength(
       2,
     );
     expect(
