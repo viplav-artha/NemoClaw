@@ -11,6 +11,8 @@ import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-c
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { RD as _RD, R } from "../../cli/terminal-style";
 import {
+  BEDROCK_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV,
+  BEDROCK_RUNTIME_PROVIDER_NAME,
   hasBedrockRuntimeAwsAuthEnv,
   isBedrockRuntimeEndpoint,
 } from "../../inference/bedrock-runtime";
@@ -166,6 +168,21 @@ function printMissingRebuildGatewayProviderCredential(
     `  Re-register '${provider}' with ${credentialKey} in OpenShell or rerun onboard, then retry rebuild.`,
   );
   console.error("  Sandbox is untouched — no data was lost.");
+}
+
+/**
+ * Credential key the gateway provider is expected to expose. Bedrock Runtime
+ * sandboxes record COMPATIBLE_ANTHROPIC_API_KEY, but onboard registers the
+ * gateway provider with the local adapter token instead.
+ */
+export function rebuildGatewayCredentialKey(
+  provider: string | null | undefined,
+  credentialEnv: string | null,
+  endpointUrl: string | null | undefined,
+): string | null {
+  return provider === BEDROCK_RUNTIME_PROVIDER_NAME && isBedrockRuntimeEndpoint(endpointUrl)
+    ? BEDROCK_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV
+    : credentialEnv;
 }
 
 export function shouldVerifyRebuildGatewayProvider(
