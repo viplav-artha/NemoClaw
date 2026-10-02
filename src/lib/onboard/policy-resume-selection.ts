@@ -1,11 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  isWebSearchProvider,
-  type WebSearchConfig,
-  webSearchProviderForConfig,
-} from "../inference/web-search";
+import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
 import {
   filterSetupPolicyPresetNamesForAgent,
   filterSetupPolicyPresetsForAgent,
@@ -127,7 +123,9 @@ export async function preparePolicyPresetResumeSelection(
       customOwnsObservability,
     });
   const liveBuiltinWebSearchProviderChanged = clampedLivePolicyPresets.some(
-    (name) => isWebSearchProvider(name) && isStaleBuiltinWebSearch(name),
+    (name) =>
+      (name === "brave" || name === "tavily" || name === "duckduckgo") &&
+      isStaleBuiltinWebSearch(name),
   );
   let policyPresets = pruneDisabledMessagingPolicyPresets(
     clampedLivePolicyPresets.filter(

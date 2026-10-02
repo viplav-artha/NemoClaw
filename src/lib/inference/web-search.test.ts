@@ -83,7 +83,7 @@ describe("web-search module", () => {
       provider: null,
     });
     expect(() => parseExplicitWebSearchProvider("google")).toThrow(
-      /Valid values: brave, tavily, duckduckgo, parallel-free, firecrawl-free, searxng, ollama, none/,
+      /Valid values: brave, tavily, duckduckgo, none/,
     );
   });
 });

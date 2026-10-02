@@ -757,16 +757,8 @@ export function openClawDoctorEnvOverrides(
       overrides.BRAVE_API_KEY = "openshell:resolve:env:BRAVE_API_KEY";
     } else if (provider === "tavily") {
       overrides.TAVILY_API_KEY = "openshell:resolve:env:TAVILY_API_KEY";
-    } else if (provider === "duckduckgo" || provider === "parallel-free" || provider === "firecrawl-free") {
+    } else if (provider === "duckduckgo") {
       // Keyless provider — no credential env to resolve or override.
-    } else if (provider === "searxng") {
-      // Not a secret — the user's own self-hosted instance URL is already
-      // baked into openclaw.json as a literal value by
-      // generate-openclaw-config.mts; no gateway-resolved override needed.
-    } else if (provider === "ollama") {
-      // Optional — a locally signed-in Ollama instance needs no key, so
-      // resolving this placeholder unconditionally is harmless either way.
-      overrides.OLLAMA_API_KEY = "openshell:resolve:env:OLLAMA_API_KEY";
     } else {
       throw new MessagingBuildApplierError(
         `Unsupported NEMOCLAW_WEB_SEARCH_PROVIDER: ${provider || "<empty>"}`,

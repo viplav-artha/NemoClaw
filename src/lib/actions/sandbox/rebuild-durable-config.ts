@@ -141,13 +141,10 @@ function normalizeHermesAuthMethod(value: unknown): "oauth" | "api_key" | null {
   return value === "oauth" || value === "api_key" ? value : null;
 }
 
-// Every WebSearchProvider now has a policy preset named identically to its
-// provider value (brave, tavily, duckduckgo, parallel-free, firecrawl-free,
-// searxng, ollama) — checking isWebSearchProvider() here instead of
-// enumerating providers one by one avoids silently missing a future addition
-// (the exact gap that broke openClawDoctorEnvOverrides() before).
 function builtinWebSearchPolicyProviders(entry: RebuildSandboxEntry): WebSearchProvider[] {
-  return isWebSearchProvider(entry.webSearchProvider) ? [entry.webSearchProvider] : [];
+  return (["brave", "tavily", "duckduckgo"] as const).filter(
+    (provider) => entry.webSearchProvider === provider,
+  );
 }
 
 export function resolveRebuildDurableConfig(

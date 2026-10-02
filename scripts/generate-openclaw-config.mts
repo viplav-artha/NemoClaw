@@ -96,75 +96,12 @@ const MANAGED_INFERENCE_SAFEGUARD_COMPACTION: JsonObject = {
   notifyUser: true,
 };
 const FALSE_VALUES = new Set(["0", "false", "no", "off"]);
-// pluginId is the real @openclaw/*-plugin manifest id under plugins.entries —
-// confirmed from each published plugin's own openclaw.plugin.json, not
-// assumed from the provider value. Parallel and Firecrawl each ship ONE
-// plugin covering both their paid and free tiers, so "parallel-free" and
-// "firecrawl-free" (provider values, selected via tools.web.search.provider)
-// map to the shared "parallel"/"firecrawl" plugin entry id, not a
-// "-free"-suffixed one. credentialField selects the plugin config shape:
-// "apiKey" for a real secret, "baseUrl" for SearXNG's non-secret required
-// instance URL, null for a fully keyless provider or a provider (Ollama) with
-// no separately installable/verified plugin entry to render here.
-// resolveViaGateway controls whether credentialField's value is an
-// OpenShell-resolved placeholder (openshell:resolve:env:<NAME>, kept out of
-// the image and rewritten only at egress — for a real secret) or the literal
-// env value baked directly into the generated config at build time (for a
-// non-secret value with nothing to protect, like SearXNG's own instance URL).
 const WEB_SEARCH_PROVIDERS = {
-  brave: {
-    credentialEnv: "BRAVE_API_KEY",
-    pluginId: "brave",
-    credentialField: "apiKey",
-    resolveViaGateway: true,
-  },
-  tavily: {
-    credentialEnv: "TAVILY_API_KEY",
-    pluginId: "tavily",
-    credentialField: "apiKey",
-    resolveViaGateway: true,
-  },
+  brave: { credentialEnv: "BRAVE_API_KEY" },
+  tavily: { credentialEnv: "TAVILY_API_KEY" },
   // Keyless: @openclaw/duckduckgo-plugin declares requiresCredential: false
   // and an empty envVars list — there is no OpenShell credential to resolve.
-  duckduckgo: {
-    credentialEnv: null,
-    pluginId: "duckduckgo",
-    credentialField: null,
-    resolveViaGateway: false,
-  },
-  "parallel-free": {
-    credentialEnv: null,
-    pluginId: "parallel",
-    credentialField: null,
-    resolveViaGateway: false,
-  },
-  "firecrawl-free": {
-    credentialEnv: null,
-    pluginId: "firecrawl",
-    credentialField: null,
-    resolveViaGateway: false,
-  },
-  // Not a secret — the user's own self-hosted instance URL. Baked as a
-  // literal value directly (resolveViaGateway: false): there is nothing to
-  // hide from the sandbox and no per-request header to rewrite at egress,
-  // unlike a real API key.
-  searxng: {
-    credentialEnv: "SEARXNG_BASE_URL",
-    pluginId: "searxng",
-    credentialField: "baseUrl",
-    resolveViaGateway: false,
-  },
-  // Optional: a locally signed-in Ollama instance needs no key. No separate
-  // @openclaw/ollama-plugin package could be found/verified on the npm
-  // registry (unlike every other provider here), so this provider value is
-  // selectable but renders no plugins.entries block — if OpenClaw's bundled
-  // Ollama web-search support needs one, that remains unverified.
-  ollama: {
-    credentialEnv: "OLLAMA_API_KEY",
-    pluginId: null,
-    credentialField: null,
-    resolveViaGateway: false,
-  },
+  duckduckgo: { credentialEnv: null },
 } as const;
 type WebSearchProvider = keyof typeof WEB_SEARCH_PROVIDERS;
 const DEFAULT_OPENCLAW_OTEL_ENDPOINT = "http://host.openshell.internal:4318";
@@ -210,11 +147,10 @@ function isObject(value: unknown): value is JsonObject {
 
 function resolveWebSearchProvider(env: Env): WebSearchProvider {
   const provider = (env.NEMOCLAW_WEB_SEARCH_PROVIDER || "brave").trim();
-  if (Object.hasOwn(WEB_SEARCH_PROVIDERS, provider)) return provider as WebSearchProvider;
-  const valid = Object.keys(WEB_SEARCH_PROVIDERS)
-    .map((name) => `"${name}"`)
-    .join(", ");
-  throw new Error(`NEMOCLAW_WEB_SEARCH_PROVIDER must be one of ${valid}, got ${JSON.stringify(provider)}`);
+  if (provider === "brave" || provider === "tavily" || provider === "duckduckgo") return provider;
+  throw new Error(
+    `NEMOCLAW_WEB_SEARCH_PROVIDER must be "brave", "tavily", or "duckduckgo", got ${JSON.stringify(provider)}`,
+  );
 }
 
 function unique<T>(values: Iterable<T>): T[] {
@@ -1169,27 +1105,21 @@ export function buildConfig(env: Env = process.env): JsonObject {
 
   if (webSearchProvider) {
     // OpenClaw 2026.5.x keeps provider-owned credentials under
-    // plugins.entries.<pluginId>.config rather than inline on
-    // tools.web.search. Credentialed providers (brave, tavily) use the
-    // plugin-scoped apiKey shape; SearXNG uses the same shape but with a
-    // non-secret baseUrl field instead. A fully keyless provider
-    // (DuckDuckGo, Parallel Search Free, Firecrawl Search Free) must not
-    // receive either field — their configSchema has neither property
-    // (additionalProperties: false).
-    const providerMeta = WEB_SEARCH_PROVIDERS[webSearchProvider];
+    // plugins.entries.<provider>.config rather than inline on tools.web.search.
+    // Credentialed providers (brave, tavily) use the same plugin-scoped
+    // apiKey shape. DuckDuckGo (@openclaw/duckduckgo-plugin) declares
+    // requiresCredential: false and its configSchema has no apiKey property
+    // at all (additionalProperties: false), so it must not receive one.
+    const credentialEnv = WEB_SEARCH_PROVIDERS[webSearchProvider].credentialEnv;
     tools.web.search = { enabled: true, provider: webSearchProvider };
-    if (providerMeta.pluginId) {
-      let fieldValue: string | null = null;
-      if (providerMeta.credentialField && providerMeta.credentialEnv) {
-        fieldValue = providerMeta.resolveViaGateway
-          ? `openshell:resolve:env:${providerMeta.credentialEnv}`
-          : (env[providerMeta.credentialEnv] || "").trim() || null;
-      }
-      config.plugins.entries[providerMeta.pluginId] =
-        providerMeta.credentialField && fieldValue
-          ? { enabled: true, config: { webSearch: { [providerMeta.credentialField]: fieldValue } } }
-          : { enabled: true };
-    }
+    config.plugins.entries[webSearchProvider] = credentialEnv
+      ? {
+          enabled: true,
+          config: {
+            webSearch: { apiKey: `openshell:resolve:env:${credentialEnv}` },
+          },
+        }
+      : { enabled: true };
   }
 
   return config;

@@ -13,7 +13,6 @@ import type {
   OnboardCheckpoint,
 } from "../state/onboard-checkpoint-types";
 import { webSearchProviderProfileId } from "../messaging/applier/web-search-provider-profile";
-import type { WebSearchProvider } from "../inference/web-search";
 import type { OnboardMachineState } from "./machine/types";
 import { ONBOARD_MACHINE_STATES } from "./machine/types";
 import {
@@ -132,16 +131,8 @@ export function observeProviderEffectFingerprint(
   return fingerprint;
 }
 
-// Only providers that actually reach requiredWebSearchProviderBindings()
-// (machine/handlers/sandbox.ts) ever call this in practice: brave, tavily,
-// and ollama's optional key all have a real OpenShell-resolved credentialEnv.
-// DuckDuckGo, Parallel Search Free, and Firecrawl Search Free are keyless;
-// SearXNG's credentialEnv is a baked-in literal, not a gateway-resolved
-// secret — the caller's own guard excludes all four before reaching here,
-// but that guard isn't literal enough for the type checker to narrow
-// automatically, hence the full WebSearchProvider parameter type.
 export function requiredWebSearchProviderType(
-  provider: WebSearchProvider,
+  provider: "brave" | "tavily" | "duckduckgo",
   agent: { name?: string } | null,
 ): string {
   return webSearchProviderProfileId(provider, agent?.name);
