@@ -1843,6 +1843,9 @@ RUN --network=none --mount=from=openclaw-optional-plugin-archives,target=/opt/ne
             "@openclaw/diagnostics-otel@2026.9.1") expected_integrity="$OPENCLAW_DIAGNOSTICS_OTEL_2026_9_1_INTEGRITY"; expected_tarball="https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.9.1.tgz"; archive_name="diagnostics-otel-2026.9.1.tgz" ;; \
             "@openclaw/brave-plugin@2026.9.1") expected_integrity="$OPENCLAW_BRAVE_PLUGIN_2026_9_1_INTEGRITY"; expected_tarball="https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.1.tgz"; archive_name="brave-plugin-2026.9.1.tgz" ;; \
             "@openclaw/duckduckgo-plugin@2026.9.1") expected_integrity="$OPENCLAW_DUCKDUCKGO_PLUGIN_2026_9_1_INTEGRITY"; expected_tarball="https://registry.npmjs.org/@openclaw/duckduckgo-plugin/-/duckduckgo-plugin-2026.9.1.tgz"; archive_name="duckduckgo-plugin-2026.9.1.tgz" ;; \
+            "@openclaw/parallel-plugin@2026.9.1") expected_integrity="$OPENCLAW_PARALLEL_PLUGIN_2026_9_1_INTEGRITY"; expected_tarball="https://registry.npmjs.org/@openclaw/parallel-plugin/-/parallel-plugin-2026.9.1.tgz"; archive_name="parallel-plugin-2026.9.1.tgz" ;; \
+            "@openclaw/firecrawl-plugin@2026.9.1") expected_integrity="$OPENCLAW_FIRECRAWL_PLUGIN_2026_9_1_INTEGRITY"; expected_tarball="https://registry.npmjs.org/@openclaw/firecrawl-plugin/-/firecrawl-plugin-2026.9.1.tgz"; archive_name="firecrawl-plugin-2026.9.1.tgz" ;; \
+            "@openclaw/searxng-plugin@2026.9.1") expected_integrity="$OPENCLAW_SEARXNG_PLUGIN_2026_9_1_INTEGRITY"; expected_tarball="https://registry.npmjs.org/@openclaw/searxng-plugin/-/searxng-plugin-2026.9.1.tgz"; archive_name="searxng-plugin-2026.9.1.tgz" ;; \
         esac; \
         if [ -z "$expected_integrity" ]; then \
             echo "ERROR: OpenClaw plugin ${plugin_spec} has no committed npm integrity pin" >&2; exit 1; \
