@@ -8,7 +8,7 @@ import type { Readable } from "node:stream";
 
 import type { RebuildSandboxOptions } from "../../../domain/lifecycle/options";
 import { resolveGatewayName } from "../../../gateway-runtime-action";
-import { webSearchEnvFor } from "../../../inference/web-search";
+import { isWebSearchProvider, webSearchEnvFor } from "../../../inference/web-search";
 import { resolveGatewayStateDirForPort } from "../../../onboard/gateway/state-dir";
 import { snapshotCredentialEnv } from "../../../onboard/credential-env";
 import {
@@ -141,15 +141,13 @@ function rebuildWorkerEnv(
 function rebuildCredentialEnvNames(entry: SandboxEntry): readonly string[] {
   const names = new Set<string>();
   if (entry.credentialEnv) names.add(entry.credentialEnv);
-  const webSearchProvider =
-    entry.webSearchProvider === "brave" ||
-    entry.webSearchProvider === "tavily" ||
-    entry.webSearchProvider === "duckduckgo"
-      ? entry.webSearchProvider
-      : entry.webSearchEnabled === true
-        ? "brave"
-        : null;
-  // DuckDuckGo is keyless — no credential env to snapshot for it.
+  const webSearchProvider = isWebSearchProvider(entry.webSearchProvider)
+    ? entry.webSearchProvider
+    : entry.webSearchEnabled === true
+      ? "brave"
+      : null;
+  // A keyless provider (DuckDuckGo, Parallel Search Free, Firecrawl Search
+  // Free) has no credential env to snapshot for it.
   const webSearchCredentialEnv = webSearchProvider ? webSearchEnvFor(webSearchProvider) : null;
   if (webSearchCredentialEnv) names.add(webSearchCredentialEnv);
   for (const binding of getMessagingPlanFromEntry(entry)?.credentialBindings ?? []) {

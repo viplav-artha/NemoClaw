@@ -84,6 +84,7 @@ import {
 } from "./rebuild-prepared-recovery";
 import {
   inspectRebuildGatewayProviderRegistration,
+  rebuildGatewayCredentialKey,
   shouldVerifyRebuildGatewayProvider,
 } from "./rebuild-provider-preflight";
 import {
@@ -916,20 +917,25 @@ async function rebuildSandboxUnlocked(
             !recreateOptions.rebuildProviderReconfigure &&
             shouldVerifyRebuildGatewayProvider(resumeConfig.provider)
           ) {
+            const gatewayCredentialKey = rebuildGatewayCredentialKey(
+              resumeConfig.provider,
+              resumeConfig.credentialEnv,
+              resumeConfig.endpointUrl,
+            );
             const registration = await inspectRebuildGatewayProviderRegistration(
               resumeConfig.provider,
               log,
               "Before deletion",
               runtimeSelection,
               undefined,
-              resumeConfig.credentialEnv,
+              gatewayCredentialKey,
             );
             if (registration !== "registered") {
               return {
                 ok: false,
                 message:
                   registration === "credential_missing"
-                    ? `Gateway provider '${resumeConfig.provider}' no longer exposes credential ${resumeConfig.credentialEnv} before sandbox deletion. Re-register the provider, then retry rebuild.`
+                    ? `Gateway provider '${resumeConfig.provider}' no longer exposes credential ${gatewayCredentialKey} before sandbox deletion. Re-register the provider, then retry rebuild.`
                     : `Gateway provider '${resumeConfig.provider}' is ${registration} before sandbox deletion. Refresh its credential or restore gateway access, then retry rebuild.`,
               };
             }

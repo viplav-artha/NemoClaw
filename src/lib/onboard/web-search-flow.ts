@@ -9,8 +9,11 @@ import type { AgentDefinition } from "../agent/defs";
 import { getCredential, normalizeCredentialValue, saveCredential } from "../credentials/store";
 import {
   BRAVE_API_KEY_ENV,
+  isWebSearchCredentialRequired,
   normalizeWebSearchConfig,
+  OLLAMA_API_KEY_ENV,
   parseExplicitWebSearchProvider,
+  SEARXNG_BASE_URL_ENV,
   TAVILY_API_KEY_ENV,
   WEB_SEARCH_PROVIDER_ENV,
   WEB_SEARCH_PROVIDERS,
@@ -36,23 +39,35 @@ import { verifyWebSearchInsideSandbox as verifyWebSearchInsideSandboxWithDeps } 
 const BRAVE_SEARCH_HELP_URL = "https://brave.com/search/api/";
 const TAVILY_SEARCH_HELP_URL = "https://app.tavily.com/home";
 const DUCKDUCKGO_SEARCH_HELP_URL = "https://docs.openclaw.ai/tools/web";
+const PARALLEL_FREE_SEARCH_HELP_URL = "https://docs.openclaw.ai/tools/parallel-search";
+const FIRECRAWL_FREE_SEARCH_HELP_URL = "https://docs.openclaw.ai/tools/firecrawl";
+const SEARXNG_SEARCH_HELP_URL = "https://docs.openclaw.ai/tools/searxng-search";
+const OLLAMA_SEARCH_HELP_URL = "https://docs.openclaw.ai/tools/web";
 const WEB_SEARCH_VALIDATION_TIMING_ARGS = ["--connect-timeout", "10", "--max-time", "15"] as const;
-// DuckDuckGo needs no probe config — it never reaches validateWebSearchApiKey
-// (no credential to validate), but the Record must stay total over
-// WebSearchProvider for type-checking.
+// Keyless providers (DuckDuckGo, Parallel Search Free, Firecrawl Search Free)
+// never reach validateWebSearchApiKey's header-auth probe (no credential to
+// validate), but the Record must stay total over WebSearchProvider for
+// type-checking. SearXNG and Ollama use their own dedicated probes below
+// instead of this generic header-auth shape.
 const CURL_CONFIG_PREFIX: Record<WebSearchProvider, string> = {
   brave: "nemoclaw-brave-probe",
   tavily: "nemoclaw-tavily-probe",
   duckduckgo: "nemoclaw-duckduckgo-probe",
+  "parallel-free": "nemoclaw-parallel-free-probe",
+  "firecrawl-free": "nemoclaw-firecrawl-free-probe",
+  searxng: "nemoclaw-searxng-probe",
+  ollama: "nemoclaw-ollama-probe",
 };
 
 type WebSearchProviderSpec = {
   provider: WebSearchProvider;
-  // null marks a keyless provider (DuckDuckGo): no OpenShell credential
-  // provider, no process env var, nothing to prompt for or validate.
+  // null marks a keyless provider: no OpenShell credential provider, no
+  // process env var, nothing to prompt for or validate.
   envKey: string | null;
   label: string;
   helpUrl: string;
+  /** True for SearXNG: the env slot holds a plain instance URL, not a secret. */
+  isUrlConfig?: boolean;
 };
 
 const WEB_SEARCH_PROVIDER_SPECS: Record<WebSearchProvider, WebSearchProviderSpec> = {
@@ -74,11 +89,46 @@ const WEB_SEARCH_PROVIDER_SPECS: Record<WebSearchProvider, WebSearchProviderSpec
     label: webSearchLabelFor("duckduckgo"),
     helpUrl: DUCKDUCKGO_SEARCH_HELP_URL,
   },
+  "parallel-free": {
+    provider: "parallel-free",
+    envKey: null,
+    label: webSearchLabelFor("parallel-free"),
+    helpUrl: PARALLEL_FREE_SEARCH_HELP_URL,
+  },
+  "firecrawl-free": {
+    provider: "firecrawl-free",
+    envKey: null,
+    label: webSearchLabelFor("firecrawl-free"),
+    helpUrl: FIRECRAWL_FREE_SEARCH_HELP_URL,
+  },
+  searxng: {
+    provider: "searxng",
+    envKey: SEARXNG_BASE_URL_ENV,
+    label: webSearchLabelFor("searxng"),
+    helpUrl: SEARXNG_SEARCH_HELP_URL,
+    isUrlConfig: true,
+  },
+  ollama: {
+    provider: "ollama",
+    envKey: OLLAMA_API_KEY_ENV,
+    label: webSearchLabelFor("ollama"),
+    helpUrl: OLLAMA_SEARCH_HELP_URL,
+  },
 };
 
-/** True when the provider brokers no OpenShell credential (DuckDuckGo). */
+/** True when the provider brokers no OpenShell credential at all. */
 function isKeylessWebSearchProvider(provider: WebSearchProvider): boolean {
   return webSearchEnvFor(provider) === null;
+}
+
+/** True only for Ollama: its env slot is optional, not mandatory. */
+function isOptionalCredentialWebSearchProvider(provider: WebSearchProvider): boolean {
+  return !isKeylessWebSearchProvider(provider) && !isWebSearchCredentialRequired(provider);
+}
+
+/** True only for SearXNG: the env slot is a plain instance URL, not a secret. */
+function isUrlConfigWebSearchProvider(provider: WebSearchProvider): boolean {
+  return WEB_SEARCH_PROVIDER_SPECS[provider].isUrlConfig === true;
 }
 
 export interface WebSearchFlowDeps {
@@ -185,9 +235,62 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
     };
   }
 
+  // SearXNG's env slot holds the user's own instance URL, not a secret — no
+  // Authorization header is sent, just a plain reachability GET against the
+  // instance's own /search endpoint with format=json (the same path the real
+  // @openclaw/searxng-plugin requests).
+  function validateSearxngInstanceUrl(baseUrl: string): CurlProbeResult {
+    let parsed: URL;
+    try {
+      parsed = new URL(baseUrl);
+    } catch {
+      return invalidApiKey("searxng", "must be a valid URL, e.g. http://localhost:8888.");
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return invalidApiKey("searxng", "must use http:// or https://.");
+    }
+    const probeUrl = new URL("/search", parsed);
+    probeUrl.searchParams.set("q", "ping");
+    probeUrl.searchParams.set("format", "json");
+    return runCurlProbe([
+      "-sS",
+      ...WEB_SEARCH_VALIDATION_TIMING_ARGS,
+      probeUrl.toString(),
+    ]);
+  }
+
+  // Ollama's remote hosted search (https://ollama.com) is optional and its
+  // exact authenticated endpoint shape is not documented publicly — this is
+  // a best-effort connectivity check only (any response, including an auth
+  // rejection, counts as "reachable"); it does not confirm the key itself is
+  // valid the way the Brave/Tavily probes do.
+  function validateOllamaApiKey(apiKey: string): CurlProbeResult {
+    if (/[\r\n]/.test(apiKey) || apiKey.includes("\0")) {
+      return invalidApiKey("ollama", "must not contain control characters.");
+    }
+    const authConfig = createCurlAuthConfig(
+      [{ kind: "header", value: `Authorization: Bearer ${apiKey}` }],
+      { prefix: CURL_CONFIG_PREFIX.ollama },
+    );
+    try {
+      return runCurlProbe(
+        ["-sS", ...WEB_SEARCH_VALIDATION_TIMING_ARGS, ...authConfig.args, "https://ollama.com"],
+        { trustedConfigFiles: authConfig.trustedConfigFiles },
+      );
+    } finally {
+      authConfig.cleanup();
+    }
+  }
+
   function validateWebSearchApiKey(provider: WebSearchProvider, apiKey: string): CurlProbeResult {
     if (isKeylessWebSearchProvider(provider)) {
       throw new Error(`${providerSpec(provider).label} does not use an API key; nothing to validate.`);
+    }
+    if (isUrlConfigWebSearchProvider(provider)) {
+      return validateSearxngInstanceUrl(apiKey);
+    }
+    if (provider === "ollama") {
+      return validateOllamaApiKey(apiKey);
     }
     if (/[\r\n]/.test(apiKey)) {
       return invalidApiKey(provider, "must not contain line breaks.");
@@ -247,12 +350,24 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
     provider: WebSearchProvider,
   ): Promise<string | BackToSelection> {
     const spec = providerSpec(provider);
+    const fieldLabel = spec.isUrlConfig ? "instance URL" : "API key";
+    const optional = isOptionalCredentialWebSearchProvider(provider);
     console.log("");
-    console.log(`  Get your ${spec.label} API key from: ${spec.helpUrl}`);
+    if (spec.isUrlConfig) {
+      console.log(`  Enter your self-hosted ${spec.label} instance URL, e.g. http://localhost:8888`);
+      console.log(`  Docs: ${spec.helpUrl}`);
+    } else {
+      console.log(`  Get your ${spec.label} API key from: ${spec.helpUrl}`);
+      if (optional) {
+        console.log("  Leave this blank to use a locally signed-in Ollama instance with no key.");
+      }
+    }
     console.log("");
 
     while (true) {
-      const value = await deps.prompt(`  ${spec.label} API key: `, { secret: true });
+      const value = await deps.prompt(`  ${spec.label} ${fieldLabel}: `, {
+        secret: !spec.isUrlConfig,
+      });
       const intent = normalizeCredentialValue(value).toLowerCase();
       if (intent === "back") return BACK_TO_SELECTION;
       if (intent === "exit" || intent === "quit") exitOnboardFromPrompt();
@@ -262,11 +377,12 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
       }
       const key = normalizeCredentialValue(value);
       if (!key) {
+        if (optional) return "";
         // Empty input used to loop with no visible escape, leaving Ctrl+C as
         // the only way out (#6025). Surface the existing back/exit options so
         // the user can skip web search instead of being stuck.
         console.error(
-          `  ${spec.label} API key is required. Type back to choose a different option, or exit to quit.`,
+          `  ${spec.label} ${fieldLabel} is required. Type back to choose a different option, or exit to quit.`,
         );
         continue;
       }
@@ -308,6 +424,7 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
         : webSearchProviderForConfig(providerOrConfig);
     if (isKeylessWebSearchProvider(provider)) return KEYLESS_PROVIDER_SENTINEL;
     const spec = providerSpec(provider);
+    const optional = isOptionalCredentialWebSearchProvider(provider);
     // Non-null: the keyless (envKey === null) case already returned above.
     const envKey = spec.envKey as string;
     const savedApiKey = readCredential(envKey);
@@ -317,12 +434,14 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
     while (true) {
       if (!apiKey) {
         if (nonInteractive) {
+          if (optional) return KEYLESS_PROVIDER_SENTINEL;
           throw new Error(
             `${spec.label} requires ${spec.envKey} or a saved ${spec.label} credential in non-interactive mode.`,
           );
         }
         const promptedApiKey = await promptWebSearchApiKey(provider);
         if (isBackToSelection(promptedApiKey)) return promptedApiKey;
+        if (!promptedApiKey && optional) return KEYLESS_PROVIDER_SENTINEL;
         apiKey = promptedApiKey;
         usingSavedKey = false;
       }
@@ -462,6 +581,10 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
     const spec = providerSpec(provider);
     const apiKey = configuredCredential(provider);
     if (!apiKey) {
+      if (isOptionalCredentialWebSearchProvider(provider)) {
+        deps.note(`  [non-interactive] ${spec.label} requested (no key — local instance).`);
+        return { fetchEnabled: true, provider };
+      }
       if (explicit.specified || existingConfig) {
         throw new Error(
           `${spec.label} requires ${spec.envKey} or a saved ${spec.label} credential in non-interactive mode.`,

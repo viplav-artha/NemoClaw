@@ -21,8 +21,22 @@ export const OPENCLAW_CONFIG_RESTORE_OWNERSHIP = {
   managedChannels: MANAGED_OPENCLAW_CHANNEL_NAMES,
   /** Current generated entries win by id; backup-only user entries are kept. */
   currentGeneratedEntryMaps: ["plugins.entries"],
-  /** Fresh web-search selection owns these bundled/external plugin entries. */
-  managedWebSearchPluginEntries: ["brave", "tavily", "duckduckgo"],
+  /**
+   * Fresh web-search selection owns these bundled/external plugin entries.
+   * These are plugin manifest IDs, not provider values — parallel-free and
+   * firecrawl-free share their paid-tier plugin's entry ("parallel",
+   * "firecrawl"), confirmed from each plugin's own openclaw.plugin.json.
+   * Ollama has no separate plugin entry (see web-search.ts), so nothing to
+   * list for it.
+   */
+  managedWebSearchPluginEntries: [
+    "brave",
+    "tavily",
+    "duckduckgo",
+    "parallel",
+    "firecrawl",
+    "searxng",
+  ],
   /** Fresh web-search selection owns this path, including its absence. */
   managedWebSearchConfigPaths: ["tools.web.search"],
   /**

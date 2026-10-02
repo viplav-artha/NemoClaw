@@ -8,6 +8,7 @@ import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
 import {
   checkRebuildGatewayProviderOrBail,
+  rebuildGatewayCredentialKey,
   shouldVerifyRebuildGatewayProvider,
 } from "./rebuild-provider-preflight";
 import { getRebuildCredentialEnvFromRegistry } from "./rebuild-resume-config";
@@ -181,8 +182,13 @@ export async function preflightRebuildCredentials(
   log(
     `Preflight credential check: ${rebuildCredentialEnv} → ${credentialValue ? "present" : "MISSING"}`,
   );
+  const gatewayCredentialKey = rebuildGatewayCredentialKey(
+    rebuildProvider,
+    rebuildCredentialEnv,
+    sb.endpointUrl,
+  );
   if (
-    !(await checkRebuildGatewayProviderOrBail(rebuildProvider, rebuildCredentialEnv, log, bail, {
+    !(await checkRebuildGatewayProviderOrBail(rebuildProvider, gatewayCredentialKey, log, bail, {
       allowProviderReconfigure: options.allowMissingGatewayProviderWithHostCredential,
       hostCredentialAvailable: Boolean(credentialValue),
       onProviderReconfigureRequired: options.onGatewayProviderReconfigureRequired,

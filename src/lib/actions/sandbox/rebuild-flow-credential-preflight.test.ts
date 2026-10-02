@@ -759,6 +759,39 @@ describe("rebuildSandbox flow: credential preflight", () => {
     expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
   });
 
+  it("accepts the Bedrock Runtime adapter token as the gateway credential key", async () => {
+    const restoreEnv = snapshotEnv(["AWS_PROFILE"]);
+    process.env.AWS_PROFILE = "bedrock-test";
+    const sandboxEntry = {
+      provider: "compatible-anthropic-endpoint",
+      model: "amazon.nova-pro-v1:0",
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+    };
+    const harness = createRebuildFlowHarness({
+      sandboxEntry,
+      hydrateCredentialEnv: () => null,
+      runOpenshell: providerRuntime(["compatible-anthropic-endpoint"], {
+        "compatible-anthropic-endpoint": "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN",
+      }),
+    });
+    configureSession(harness, sandboxEntry.provider, sandboxEntry.credentialEnv, {
+      model: sandboxEntry.model,
+      endpointUrl: sandboxEntry.endpointUrl,
+    });
+
+    try {
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).resolves.toBeUndefined();
+    } finally {
+      restoreEnv();
+    }
+
+    expect(diagnostics(harness)).not.toContain("no longer exposes credential");
+    expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+  });
+
   it("rejects nvidia-prod when both gateway registration and host key are missing", async () => {
     const harness = createRebuildFlowHarness({
       sandboxEntry: {

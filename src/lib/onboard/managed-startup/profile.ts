@@ -122,7 +122,14 @@ export const MANAGED_STARTUP_HERMES_TOOL_GATEWAYS = [
 ] as const;
 export type ManagedStartupHermesToolGateway = (typeof MANAGED_STARTUP_HERMES_TOOL_GATEWAYS)[number];
 export type ManagedStartupInputModality = "text" | "image";
-export type ManagedStartupWebSearchProvider = "brave" | "tavily" | "duckduckgo";
+export type ManagedStartupWebSearchProvider =
+  | "brave"
+  | "tavily"
+  | "duckduckgo"
+  | "parallel-free"
+  | "firecrawl-free"
+  | "searxng"
+  | "ollama";
 export const MANAGED_STARTUP_AGENTS = [
   "openclaw",
   "hermes",
@@ -385,7 +392,15 @@ const PROFILE_CAPABILITIES = {
     inferenceApis: [...MANAGED_STARTUP_INFERENCE_APIS],
     dashboardModes: ["loopback", "remote"],
     inputModalities: ["text", "image"],
-    webSearchProviders: ["brave", "tavily", "duckduckgo"],
+    webSearchProviders: [
+      "brave",
+      "tavily",
+      "duckduckgo",
+      "parallel-free",
+      "firecrawl-free",
+      "searxng",
+      "ollama",
+    ],
     toolGateways: [],
     tuningFields: ["contextWindow", "maxTokens", "reasoning", "reasoningEffort"],
     supportsMessaging: true,
