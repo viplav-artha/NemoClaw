@@ -95,6 +95,7 @@ describe("OpenClaw managed messaging offline image build", () => {
           ),
         },
       },
+      "proxy-addr": "2.0.8",
     });
     expect(nestedOverrideLocations).toHaveLength(3);
     nestedOverrideLocations.forEach((location) => {
