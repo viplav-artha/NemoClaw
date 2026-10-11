@@ -28,6 +28,11 @@ import {
   writeDurablePrivateBedrockRuntimeJson,
 } from "../../inference/bedrock-runtime/lifecycle";
 import { BEDROCK_RUNTIME_ADAPTER_PROCESS_MATCHER } from "../../inference/bedrock-runtime";
+import {
+  EXTERNAL_BEDROCK_RUNTIME_ADAPTER_STATE_ENTRIES,
+  externalBedrockRuntimeAdapterStartCommand,
+  isExternalBedrockRuntimeAdapterMode,
+} from "../../inference/bedrock-runtime/external";
 
 interface RuntimeAdapterCleanupRuntime extends BedrockRuntimeAdapterProcessRuntime {
   commandExists: (command: string) => boolean;
@@ -220,6 +225,43 @@ function bedrockEvidencePaths(stateDir: string): BedrockEvidencePaths {
     statePath: path.join(stateDir, BEDROCK_STATE_FILE),
     tokenPath: path.join(stateDir, BEDROCK_TOKEN_FILE),
   };
+}
+
+function readBedrockStateForExternalCheck(
+  statePath: string,
+  existsSync: (target: string) => boolean,
+): unknown {
+  if (!existsSync(statePath)) return null;
+  try {
+    return parseJsonObject(fs.readFileSync(statePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether the Bedrock Runtime adapter under `stateDir` belongs to an external supervisor
+ * (`"managedBy": "external"` in its state file, or NEMOCLAW_BEDROCK_ADAPTER_EXTERNAL=1).
+ */
+export function isExternalBedrockRuntimeAdapterEvidence(
+  stateDir: string,
+  env: NodeJS.ProcessEnv = process.env,
+  existsSync: (target: string) => boolean = fs.existsSync,
+): boolean {
+  return isExternalBedrockRuntimeAdapterMode(
+    readBedrockStateForExternalCheck(bedrockEvidencePaths(stateDir).statePath, existsSync),
+    env,
+  );
+}
+
+/** State-root entries uninstall must keep because an external supervisor owns them. */
+export function externalBedrockRuntimeAdapterPreservedEntries(
+  stateDir: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  return isExternalBedrockRuntimeAdapterEvidence(stateDir, env)
+    ? [...EXTERNAL_BEDROCK_RUNTIME_ADAPTER_STATE_ENTRIES]
+    : [];
 }
 
 function parseJsonObject(raw: string): Record<string, unknown> | null {
@@ -774,6 +816,16 @@ function stopBedrockRuntimeAdapterLocked(
   scanOrphans: boolean,
 ): BedrockRuntimeAdapterStopResult {
   const evidencePaths = bedrockEvidencePaths(paths.nemoclawStateDir);
+  if (
+    isExternalBedrockRuntimeAdapterEvidence(paths.nemoclawStateDir, runtime.env, runtime.existsSync)
+  ) {
+    // External supervisors own the process and its evidence; uninstall never signals
+    // or deletes them.
+    runtime.log(
+      `Kept the externally managed Bedrock Runtime adapter running; stop it with its own supervisor (${externalBedrockRuntimeAdapterStartCommand()}).`,
+    );
+    return { ok: true, status: "absent" };
+  }
   const adapterPort = resolveRuntimeAdapterPort(runtime, BEDROCK_RUNTIME_ADAPTER);
   const journalExists = runtime.existsSync(journalPath);
   let journal = journalExists ? readBedrockRuntimeAdapterUninstallJournal(journalPath) : null;

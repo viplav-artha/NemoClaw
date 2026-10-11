@@ -945,6 +945,149 @@ describe("Bedrock Runtime OpenAI adapter", () => {
     expect(stopExactBedrockRuntimeAdapterProcess).not.toHaveBeenCalled();
   });
 
+  it("reuses a healthy external adapter without spawning, signaling, or rewriting evidence", async () => {
+    const token = "e".repeat(48);
+    vi.mocked(readLocalAdapterJsonFile).mockReturnValueOnce({
+      version: 2,
+      generation: "11111111111111111111111111111111",
+      pid: 5151,
+      processStart: "linux:other-boot:5151",
+      user: "someone-else",
+      uid: 12_345,
+      executablePath: "/opt/other/node",
+      scriptPath: "/opt/other/bedrock-runtime-adapter.mts",
+      adapterPort: 11_436,
+      tokenHash: crypto.createHash("sha256").update(token).digest("hex"),
+      endpointUrl: US_EAST_1_CLASSIFICATION.endpointUrl,
+      region: "us-west-2",
+      credentialHash: "b".repeat(64),
+      updatedAt: "2026-10-09T00:00:00.000Z",
+      managedBy: "external",
+      profile: "Artha-stg-dev",
+    });
+    vi.mocked(readLocalAdapterTextFile).mockReturnValueOnce(token);
+    vi.mocked(waitForLocalAdapterHealth).mockImplementationOnce(async (probe) => probe());
+    vi.mocked(probeLocalAdapterHealth).mockResolvedValueOnce(true);
+
+    await expect(
+      ensureBedrockRuntimeAdapter({ classification: US_EAST_1_CLASSIFICATION }),
+    ).resolves.toMatchObject({ token, region: "us-west-2", managedBy: "external" });
+
+    expect(probeLocalAdapterHealth).toHaveBeenCalledWith(
+      expect.objectContaining({
+        port: 11_436,
+        expectedTokenHash: crypto.createHash("sha256").update(token).digest("hex"),
+      }),
+    );
+    expect(spawnDetachedNodeAdapter).not.toHaveBeenCalled();
+    expect(stopExactBedrockRuntimeAdapterProcess).not.toHaveBeenCalled();
+    expect(killLocalAdapterPid).not.toHaveBeenCalled();
+    expect(writeLocalAdapterSecretFile).not.toHaveBeenCalled();
+    expect(writeDurablePrivateBedrockRuntimeJson).not.toHaveBeenCalled();
+    expect(removeDurableBedrockRuntimeFile).not.toHaveBeenCalled();
+  });
+
+  it("fails with the start script when an external adapter is not healthy", async () => {
+    const token = "e".repeat(48);
+    vi.mocked(readLocalAdapterJsonFile).mockReturnValueOnce({
+      managedBy: "external",
+      adapterPort: 11_436,
+      tokenHash: crypto.createHash("sha256").update(token).digest("hex"),
+    });
+    vi.mocked(readLocalAdapterTextFile).mockReturnValueOnce(token);
+
+    await expect(
+      ensureBedrockRuntimeAdapter({ classification: US_EAST_1_CLASSIFICATION }),
+    ).rejects.toThrow(
+      /External Bedrock adapter is not running\/healthy on port 11436 .*Start it with: .*nemoclaw-artha-config\/start-bedrock-adapter\.sh/u,
+    );
+
+    expect(spawnDetachedNodeAdapter).not.toHaveBeenCalled();
+    expect(stopExactBedrockRuntimeAdapterProcess).not.toHaveBeenCalled();
+    expect(removeDurableBedrockRuntimeFile).not.toHaveBeenCalled();
+    expect(writeLocalAdapterSecretFile).not.toHaveBeenCalled();
+  });
+
+  it("forces external mode from NEMOCLAW_BEDROCK_ADAPTER_EXTERNAL without spawning", async () => {
+    await expect(
+      ensureBedrockRuntimeAdapter(
+        { classification: US_EAST_1_CLASSIFICATION },
+        { env: { NEMOCLAW_BEDROCK_ADAPTER_EXTERNAL: "1" } },
+      ),
+    ).rejects.toThrow("External Bedrock adapter is not running/healthy on port 11436");
+    expect(spawnDetachedNodeAdapter).not.toHaveBeenCalled();
+  });
+
+  it("retires stale managed evidence when no adapter runs and the port is free, reusing the token", async () => {
+    const token = "f".repeat(48);
+    vi.mocked(readLocalAdapterJsonFile).mockReturnValueOnce({
+      version: 2,
+      generation: "11111111111111111111111111111111",
+      pid: 4242,
+      processStart: "linux:old-boot:4242",
+      adapterPort: 11_436,
+      tokenHash: crypto.createHash("sha256").update(token).digest("hex"),
+    });
+    vi.mocked(readLocalAdapterTextFile).mockReturnValueOnce(token).mockReturnValueOnce("4242");
+    vi.mocked(waitForLocalAdapterHealth).mockResolvedValueOnce(true);
+    const probePortState = vi.fn(async () => "free" as const);
+    const log = vi.fn();
+
+    const result = await ensureBedrockRuntimeAdapter(
+      { classification: US_EAST_1_CLASSIFICATION },
+      { probePortState, log },
+    );
+
+    expect(probePortState).toHaveBeenCalledWith(11_436);
+    const removed = vi
+      .mocked(removeDurableBedrockRuntimeFile)
+      .mock.calls.map(([target]) => String(target));
+    expect(removed.some((target) => target.endsWith("bedrock-runtime-adapter.pid"))).toBe(true);
+    expect(removed.some((target) => target.endsWith("bedrock-runtime-adapter.json"))).toBe(true);
+    expect(removed.some((target) => target.endsWith("bedrock-runtime-adapter-token"))).toBe(false);
+    expect(spawnDetachedNodeAdapter).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({ token, managedBy: "nemoclaw" });
+    expect(vi.mocked(writeLocalAdapterSecretFile).mock.calls.at(-1)?.[1]).toBe(token);
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining("Removed stale Bedrock Runtime adapter"),
+    );
+  });
+
+  it("keeps stale evidence and refuses when an unknown process holds the adapter port", async () => {
+    const token = "f".repeat(48);
+    vi.mocked(readLocalAdapterJsonFile).mockReturnValueOnce({ version: 2, pid: 4242 });
+    vi.mocked(readLocalAdapterTextFile).mockReturnValueOnce(token).mockReturnValueOnce("4242");
+
+    await expect(
+      ensureBedrockRuntimeAdapter(
+        { classification: US_EAST_1_CLASSIFICATION },
+        { probePortState: async () => "listening" },
+      ),
+    ).rejects.toThrow(
+      /port 11436 is held by a process NemoClaw does not own.*bedrock-runtime-adapter\.json/u,
+    );
+
+    expect(removeDurableBedrockRuntimeFile).not.toHaveBeenCalled();
+    expect(spawnDetachedNodeAdapter).not.toHaveBeenCalled();
+  });
+
+  it("keeps a reused token when the respawned adapter never becomes healthy", async () => {
+    const token = "f".repeat(48);
+    vi.mocked(readLocalAdapterTextFile).mockReturnValueOnce(token).mockReturnValueOnce(null);
+
+    await expect(
+      ensureBedrockRuntimeAdapter(
+        { classification: US_EAST_1_CLASSIFICATION },
+        { probePortState: async () => "free" },
+      ),
+    ).rejects.toThrow("did not become healthy");
+
+    const removed = vi
+      .mocked(removeDurableBedrockRuntimeFile)
+      .mock.calls.map(([target]) => String(target));
+    expect(removed.some((target) => target.endsWith("bedrock-runtime-adapter-token"))).toBe(false);
+  });
+
   it("spawns the typed .mts launcher entrypoint", () => {
     expect(__test.getAdapterScriptPath().endsWith("bedrock-runtime-adapter.mts")).toBe(true);
   });

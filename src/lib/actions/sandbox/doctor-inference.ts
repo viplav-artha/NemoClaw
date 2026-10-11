@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { CLI_NAME } from "../../cli/branding";
+import { isBedrockRuntimeEndpoint } from "../../inference/bedrock-runtime";
+import { inspectBedrockRuntimeAdapterHost } from "../../inference/bedrock-runtime/external";
 import { type ProviderHealthStatus, probeProviderHealth } from "../../inference/health";
 import { inspectManagedLlamaCppStatus } from "../../inference/llama-cpp/managed-status";
 import {
@@ -57,6 +59,42 @@ export function collectManagedLlamaCppDoctorChecks(
         : {
             hint: `re-run \`${CLI_NAME} onboard\` for '${sandboxName}' to recover the exact runtime`,
           }),
+    },
+  ];
+}
+
+/**
+ * Report the host-side Bedrock Runtime adapter for a Bedrock route. Doctor never starts it:
+ * the external adapter needs `aws sso login` first, so the hint points at its start script.
+ */
+export async function collectBedrockRuntimeAdapterDoctorChecks(
+  provider: string | null | undefined,
+  endpointUrl: string | null | undefined,
+  deps: { inspectImpl?: typeof inspectBedrockRuntimeAdapterHost } = {},
+): Promise<DoctorCheck[]> {
+  if (provider !== "compatible-anthropic-endpoint" || !isBedrockRuntimeEndpoint(endpointUrl)) {
+    return [];
+  }
+  let report: Awaited<ReturnType<typeof inspectBedrockRuntimeAdapterHost>>;
+  try {
+    report = await (deps.inspectImpl ?? inspectBedrockRuntimeAdapterHost)();
+  } catch (error) {
+    return [
+      {
+        group: "Local services",
+        label: "Bedrock Runtime adapter",
+        status: "warn",
+        detail: `could not inspect: ${error instanceof Error ? error.message : String(error)}`,
+      },
+    ];
+  }
+  return [
+    {
+      group: "Local services",
+      label: "Bedrock Runtime adapter",
+      status: report.status,
+      detail: report.detail,
+      ...(report.hint ? { hint: report.hint } : {}),
     },
   ];
 }

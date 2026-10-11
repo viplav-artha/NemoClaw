@@ -58,6 +58,20 @@ import {
   writeDurablePrivateBedrockRuntimeJson,
 } from "./bedrock-runtime/lifecycle";
 import {
+  BEDROCK_RUNTIME_ADAPTER_LOG_FILE,
+  BEDROCK_RUNTIME_ADAPTER_MODEL_CATALOG_HEALTH_PATH,
+  BEDROCK_RUNTIME_ADAPTER_PID_FILE,
+  BEDROCK_RUNTIME_ADAPTER_STATE_FILE,
+  BEDROCK_RUNTIME_ADAPTER_TOKEN_FILE,
+  ExternalBedrockRuntimeAdapterUnavailableError,
+  externalBedrockRuntimeAdapterStartCommand,
+  isExternalBedrockRuntimeAdapterMode,
+  isReusableBedrockRuntimeAdapterToken,
+  type LoopbackPortState,
+  probeLoopbackPortState,
+  resolveExternalBedrockRuntimeAdapter,
+} from "./bedrock-runtime/external";
+import {
   DEFAULT_LOCAL_ADAPTER_STATE_DIR,
   isLocalAdapterProcess,
   type JsonObject,
@@ -83,12 +97,12 @@ export {
 } from "./bedrock-runtime-translation";
 
 const STATE_DIR = DEFAULT_LOCAL_ADAPTER_STATE_DIR;
-const TOKEN_PATH = path.join(STATE_DIR, "bedrock-runtime-adapter-token");
-const PID_PATH = path.join(STATE_DIR, "bedrock-runtime-adapter.pid");
-const STATE_PATH = path.join(STATE_DIR, "bedrock-runtime-adapter.json");
-export const LOG_PATH = path.join(STATE_DIR, "bedrock-runtime-adapter.log");
+const TOKEN_PATH = path.join(STATE_DIR, BEDROCK_RUNTIME_ADAPTER_TOKEN_FILE);
+const PID_PATH = path.join(STATE_DIR, BEDROCK_RUNTIME_ADAPTER_PID_FILE);
+const STATE_PATH = path.join(STATE_DIR, BEDROCK_RUNTIME_ADAPTER_STATE_FILE);
+export const LOG_PATH = path.join(STATE_DIR, BEDROCK_RUNTIME_ADAPTER_LOG_FILE);
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
-const MODEL_CATALOG_HEALTH_PATH = "/health/model-catalog";
+const MODEL_CATALOG_HEALTH_PATH = BEDROCK_RUNTIME_ADAPTER_MODEL_CATALOG_HEALTH_PATH;
 
 const { defaultLogger: defaultAdapterLogger, logEvent: logAdapterEvent } = createLocalAdapterLogger(
   { logPath: LOG_PATH },
@@ -427,13 +441,18 @@ function retireFailedStartupEvidence(
   lifecycle: BedrockRuntimeAdapterLifecyclePaths,
   gatewayPort: number,
   runtime: BedrockRuntimeAdapterProcessRuntime,
+  options: { preserveToken?: boolean } = {},
 ): boolean {
-  const evidence = [
-    ["pid", PID_PATH],
-    ["token", TOKEN_PATH],
-    ["state", STATE_PATH],
-    ["journal", lifecycle.journalPath],
-  ] as const;
+  // A reused token is still held by existing OpenShell providers, so a failed
+  // respawn keeps it for the next attempt instead of rotating every sandbox.
+  const evidence = (
+    [
+      ["pid", PID_PATH],
+      ["token", TOKEN_PATH],
+      ["state", STATE_PATH],
+      ["journal", lifecycle.journalPath],
+    ] as const
+  ).filter(([kind]) => !(options.preserveToken && kind === "token"));
   if (bedrockRuntimeAdapterProcessPresence(expected.pid, runtime) !== "absent") return false;
   if (
     evidence.some(
@@ -510,26 +529,121 @@ async function waitForAdapterHealth(
   });
 }
 
-async function ensureBedrockRuntimeAdapterLocked(options: {
-  classification: Extract<CustomAnthropicEndpointClassification, { kind: "bedrock-runtime" }>;
-  compatibleCredential?: string | null;
-  lifecycle: BedrockRuntimeAdapterLifecyclePaths;
-  gatewayPort: number;
-}): Promise<{
+export type BedrockRuntimeAdapterHandle = {
   baseUrl: string;
   localBaseUrl: string;
   logPath: string;
   credentialEnv: string;
   token: string;
   region: string;
-}> {
+  /** "external" when an externally supervised adapter was reused unchanged. */
+  managedBy?: "nemoclaw" | "external";
+};
+
+export type EnsureBedrockRuntimeAdapterDeps = {
+  env?: NodeJS.ProcessEnv;
+  log?: (message: string) => void;
+  probePortState?: (port: number) => Promise<LoopbackPortState>;
+};
+
+function bedrockRuntimeAdapterHandle(
+  token: string,
+  region: string,
+  managedBy: NonNullable<BedrockRuntimeAdapterHandle["managedBy"]>,
+): BedrockRuntimeAdapterHandle {
+  process.env[BEDROCK_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV] = token;
+  return {
+    baseUrl: BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL,
+    localBaseUrl: BEDROCK_RUNTIME_ADAPTER_LOOPBACK_OPENAI_BASE_URL,
+    logPath: LOG_PATH,
+    credentialEnv: BEDROCK_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV,
+    token,
+    region,
+    managedBy,
+  };
+}
+
+function bedrockRuntimeAdapterEvidenceList(): string {
+  return [STATE_PATH, PID_PATH, TOKEN_PATH].join(", ");
+}
+
+function bedrockRuntimeAdapterRecoveryHint(): string {
+  return `Stop that adapter and remove ${bedrockRuntimeAdapterEvidenceList()}, rerun uninstall before onboarding, or run it as an external adapter with ${externalBedrockRuntimeAdapterStartCommand()}.`;
+}
+
+/**
+ * Retire PID/state evidence of a NemoClaw-managed adapter that is provably gone: no recorded
+ * PID is a running adapter process and nothing listens on the adapter port. The token file
+ * is kept so the respawned adapter can reuse it. Nothing is signaled.
+ */
+async function retireStaleBedrockRuntimeAdapterEvidence(
+  priorState: JsonObject | null,
+  priorPid: number | null,
+  deps: EnsureBedrockRuntimeAdapterDeps,
+): Promise<void> {
+  const statePid =
+    priorState && Number.isSafeInteger(priorState.pid) && (priorState.pid as number) > 0
+      ? (priorState.pid as number)
+      : null;
+  const liveRecordedPid = [priorPid, statePid].find((pid) =>
+    isLocalAdapterProcess(pid, BEDROCK_RUNTIME_ADAPTER_PROCESS_MATCHER, runCapture),
+  );
+  if (liveRecordedPid) {
+    throw new Error(
+      `Bedrock Runtime adapter lifecycle state does not match the running process ${String(liveRecordedPid)}; rerun uninstall before onboarding. ${bedrockRuntimeAdapterRecoveryHint()}`,
+    );
+  }
+  const portState = await (deps.probePortState ?? probeLoopbackPortState)(
+    BEDROCK_RUNTIME_ADAPTER_PORT,
+  );
+  if (portState !== "free") {
+    throw new Error(
+      `Bedrock Runtime adapter lifecycle evidence remains for a generation that cannot be reused, and port ${String(BEDROCK_RUNTIME_ADAPTER_PORT)} is ${portState === "listening" ? "held by a process NemoClaw does not own" : "in an unknown state"}; rerun uninstall before onboarding. ${bedrockRuntimeAdapterRecoveryHint()}`,
+    );
+  }
+  removeDurableBedrockRuntimeFile(PID_PATH);
+  removeDurableBedrockRuntimeFile(STATE_PATH);
+  deps.log?.(
+    `  Removed stale Bedrock Runtime adapter evidence (${PID_PATH}, ${STATE_PATH}); no adapter process was running and port ${String(BEDROCK_RUNTIME_ADAPTER_PORT)} was free.`,
+  );
+}
+
+async function ensureBedrockRuntimeAdapterLocked(options: {
+  classification: Extract<CustomAnthropicEndpointClassification, { kind: "bedrock-runtime" }>;
+  compatibleCredential?: string | null;
+  lifecycle: BedrockRuntimeAdapterLifecyclePaths;
+  gatewayPort: number;
+  deps: EnsureBedrockRuntimeAdapterDeps;
+}): Promise<BedrockRuntimeAdapterHandle> {
   validateRuntimeAdapterPort("NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT", BEDROCK_RUNTIME_ADAPTER_PORT);
+  const env = options.deps.env ?? process.env;
   const region = resolveBedrockRuntimeRegion(options.classification);
   const endpointUrl = options.classification.endpointUrl;
   const compatibleCredential = options.compatibleCredential || null;
   const credentialHash = adapterCredentialHash({ endpointUrl, region, compatibleCredential });
   const priorState = readLocalAdapterJsonFile(STATE_PATH);
   const priorToken = readLocalAdapterTextFile(TOKEN_PATH);
+  if (isExternalBedrockRuntimeAdapterMode(priorState, env)) {
+    // The external supervisor owns the process, its AWS credentials, and every
+    // evidence file. Reuse it as-is when healthy; never spawn, signal, or rewrite.
+    const external = await resolveExternalBedrockRuntimeAdapter({
+      state: priorState,
+      token: priorToken,
+      env,
+      expectedPort: BEDROCK_RUNTIME_ADAPTER_PORT,
+      probeHealth: (port, tokenHash) =>
+        waitForLocalAdapterHealth(() => probeAdapterHealth({ port, tokenHash }), {
+          attempts: 3,
+          intervalMs: 100,
+        }),
+    });
+    if (external.kind === "healthy") {
+      return bedrockRuntimeAdapterHandle(external.token, external.region ?? region, "external");
+    }
+    if (external.kind === "unhealthy") {
+      throw new ExternalBedrockRuntimeAdapterUnavailableError(external);
+    }
+  }
   const priorPidText = readLocalAdapterTextFile(PID_PATH);
   const priorEvidenceExists =
     priorState !== null ||
@@ -576,26 +690,24 @@ async function ensureBedrockRuntimeAdapterLocked(options: {
       ) !== null;
   }
   if (priorToken && reusableProcessValidated) {
-    process.env[BEDROCK_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV] = priorToken;
-    return {
-      baseUrl: BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL,
-      localBaseUrl: BEDROCK_RUNTIME_ADAPTER_LOOPBACK_OPENAI_BASE_URL,
-      logPath: LOG_PATH,
-      credentialEnv: BEDROCK_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV,
-      token: priorToken,
-      region,
-    };
+    return bedrockRuntimeAdapterHandle(priorToken, region, "nemoclaw");
   }
 
   if (priorEvidenceExists) {
-    const reason = priorProcessIsRunning
-      ? priorStateProcessMatches
+    if (priorProcessIsRunning) {
+      const reason = priorStateProcessMatches
         ? "the running generation cannot be reused"
-        : "lifecycle state does not match the running process"
-      : "lifecycle evidence remains for a generation that cannot be reused";
-    throw new Error(`Bedrock Runtime adapter ${reason}; rerun uninstall before onboarding.`);
+        : "lifecycle state does not match the running process";
+      throw new Error(
+        `Bedrock Runtime adapter ${reason}; rerun uninstall before onboarding. ${bedrockRuntimeAdapterRecoveryHint()}`,
+      );
+    }
+    await retireStaleBedrockRuntimeAdapterEvidence(priorState, priorPid, options.deps);
   }
-  const token = crypto.randomBytes(24).toString("hex");
+  // Keep a still-valid token across respawns so OpenShell providers that already
+  // hold it (other sandboxes on this host) keep authenticating after a restart.
+  const tokenReused = isReusableBedrockRuntimeAdapterToken(priorToken);
+  const token = tokenReused ? priorToken! : crypto.randomBytes(24).toString("hex");
   const generation = crypto.randomBytes(16).toString("hex");
   const childEnv: Record<string, string> = {
     NEMOCLAW_BEDROCK_RUNTIME_ENDPOINT_URL: endpointUrl,
@@ -694,6 +806,7 @@ async function ensureBedrockRuntimeAdapterLocked(options: {
         options.lifecycle,
         options.gatewayPort,
         processRuntime,
+        { preserveToken: tokenReused },
       )
     ) {
       throw new Error(
@@ -703,29 +816,16 @@ async function ensureBedrockRuntimeAdapterLocked(options: {
     }
     throw err;
   }
-  process.env[BEDROCK_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV] = token;
-
-  return {
-    baseUrl: BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL,
-    localBaseUrl: BEDROCK_RUNTIME_ADAPTER_LOOPBACK_OPENAI_BASE_URL,
-    logPath: LOG_PATH,
-    credentialEnv: BEDROCK_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV,
-    token,
-    region,
-  };
+  return bedrockRuntimeAdapterHandle(token, region, "nemoclaw");
 }
 
-export async function ensureBedrockRuntimeAdapter(options: {
-  classification: Extract<CustomAnthropicEndpointClassification, { kind: "bedrock-runtime" }>;
-  compatibleCredential?: string | null;
-}): Promise<{
-  baseUrl: string;
-  localBaseUrl: string;
-  logPath: string;
-  credentialEnv: string;
-  token: string;
-  region: string;
-}> {
+export async function ensureBedrockRuntimeAdapter(
+  options: {
+    classification: Extract<CustomAnthropicEndpointClassification, { kind: "bedrock-runtime" }>;
+    compatibleCredential?: string | null;
+  },
+  deps: EnsureBedrockRuntimeAdapterDeps = {},
+): Promise<BedrockRuntimeAdapterHandle> {
   const home = process.env.HOME || os.homedir();
   const lifecycle = resolveBedrockRuntimeAdapterLifecyclePaths(home, GATEWAY_PORT);
   return withBedrockRuntimeAdapterLifecycleLockAsync(lifecycle, async () => {
@@ -738,6 +838,7 @@ export async function ensureBedrockRuntimeAdapter(options: {
       ...options,
       lifecycle,
       gatewayPort: GATEWAY_PORT,
+      deps,
     });
   });
 }

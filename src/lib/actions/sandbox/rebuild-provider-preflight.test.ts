@@ -170,11 +170,67 @@ describe("checkRebuildGatewayCredentialReuseOrBail", () => {
     await expect(
       checkRebuildGatewayCredentialReuseOrBail("alpha", bedrock, false, vi.fn(), throwingBail, {
         hasBedrockRuntimeAwsAuth: () => true,
+        probeExternalBedrockRuntimeAdapter: async () => ({ kind: "not-external" }),
         readGatewayProviderMetadata,
         readRecordedProviderEndpoints: vi.fn(),
       }),
     ).resolves.toBe(true);
     expect(readGatewayProviderMetadata).not.toHaveBeenCalled();
+  });
+
+  it("accepts a healthy external Bedrock adapter without host AWS authentication", async () => {
+    const log = vi.fn();
+    const bedrock = config({
+      provider: "compatible-anthropic-endpoint",
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com/",
+    });
+
+    await expect(
+      checkRebuildGatewayCredentialReuseOrBail("alpha", bedrock, false, log, throwingBail, {
+        hasBedrockRuntimeAwsAuth: () => false,
+        probeExternalBedrockRuntimeAdapter: async () => ({
+          kind: "healthy",
+          adapterPort: 11_436,
+          endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+          pid: 4242,
+          profile: "dev",
+          region: "us-east-1",
+          token: "t".repeat(48),
+          tokenHash: "a".repeat(64),
+        }),
+        readGatewayProviderMetadata: vi.fn(),
+        readRecordedProviderEndpoints: vi.fn(),
+      }),
+    ).resolves.toBe(true);
+    expect(log).toHaveBeenCalledWith(
+      "Preflight Bedrock Runtime authentication: external Bedrock adapter is healthy on port 11436",
+    );
+  });
+
+  it("rejects an unhealthy external Bedrock adapter before deletion even with AWS auth", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const bedrock = config({
+      provider: "compatible-anthropic-endpoint",
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+    });
+
+    await expect(
+      checkRebuildGatewayCredentialReuseOrBail("alpha", bedrock, true, vi.fn(), throwingBail, {
+        hasBedrockRuntimeAwsAuth: () => true,
+        probeExternalBedrockRuntimeAdapter: async () => ({
+          kind: "unhealthy",
+          adapterPort: 11_436,
+          reason: "no adapter with the recorded token answered its health check",
+        }),
+        readGatewayProviderMetadata: vi.fn(),
+        readRecordedProviderEndpoints: vi.fn(),
+      }),
+    ).rejects.toThrow("External Bedrock Runtime adapter is unavailable");
+    const diagnostics = errors.mock.calls.flat().join(" ");
+    expect(diagnostics).toContain("External Bedrock adapter is not running/healthy on port 11436");
+    expect(diagnostics).toContain("nemoclaw-artha-config/start-bedrock-adapter.sh");
   });
 
   it("rejects Bedrock Runtime before deletion when neither AWS nor compatible auth exists", async () => {
@@ -195,6 +251,7 @@ describe("checkRebuildGatewayCredentialReuseOrBail", () => {
     await expect(
       checkRebuildGatewayCredentialReuseOrBail("alpha", bedrock, false, vi.fn(), throwingBail, {
         hasBedrockRuntimeAwsAuth: () => false,
+        probeExternalBedrockRuntimeAdapter: async () => ({ kind: "not-external" }),
         readGatewayProviderMetadata: async () => ({
           name: "compatible-anthropic-endpoint",
           type: "openai",

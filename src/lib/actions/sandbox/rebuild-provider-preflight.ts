@@ -16,6 +16,12 @@ import {
   hasBedrockRuntimeAwsAuthEnv,
   isBedrockRuntimeEndpoint,
 } from "../../inference/bedrock-runtime";
+import {
+  type ExternalBedrockRuntimeAdapterResolution,
+  externalBedrockRuntimeAdapterStartCommand,
+  formatExternalBedrockRuntimeAdapterUnavailable,
+  probeExternalBedrockRuntimeAdapter,
+} from "../../inference/bedrock-runtime/external";
 import type { GatewayProviderMetadata } from "../../onboard/gateway-provider-metadata";
 import {
   assessRecoveredProviderCredentialReuse,
@@ -109,6 +115,7 @@ export async function inspectRebuildGatewayProviderRegistration(
 
 type GatewayCredentialReusePreflightDeps = {
   hasBedrockRuntimeAwsAuth?(): boolean;
+  probeExternalBedrockRuntimeAdapter?(): Promise<ExternalBedrockRuntimeAdapterResolution>;
   readGatewayProviderMetadata(provider: string): Promise<GatewayProviderMetadata | null>;
   readRecordedProviderEndpoints(provider: string, excludeSandboxName: string): string[] | null;
 };
@@ -303,10 +310,33 @@ export async function checkRebuildGatewayCredentialReuseOrBail(
   bail: (msg: string, code?: number) => never,
   deps: GatewayCredentialReusePreflightDeps = defaultGatewayCredentialReusePreflightDeps(),
 ): Promise<boolean> {
-  if (hostCredentialAvailable || !config.provider || !config.credentialEnv) return true;
   const isBedrockRuntime =
     config.provider === "compatible-anthropic-endpoint" &&
     isBedrockRuntimeEndpoint(config.endpointUrl);
+  if (isBedrockRuntime) {
+    // An externally supervised adapter owns the host AWS credentials. Prove it is
+    // healthy before any destructive step, regardless of the caller's AWS env:
+    // the recreate step will reuse it and cannot start a replacement itself.
+    const external = await (
+      deps.probeExternalBedrockRuntimeAdapter ?? (() => probeExternalBedrockRuntimeAdapter())
+    )();
+    if (external.kind === "healthy") {
+      log(
+        `Preflight Bedrock Runtime authentication: external Bedrock adapter is healthy on port ${String(external.adapterPort)}`,
+      );
+      return true;
+    }
+    if (external.kind === "unhealthy") {
+      console.error("");
+      console.error(
+        `  ${_RD}Rebuild preflight failed:${R} ${formatExternalBedrockRuntimeAdapterUnavailable(external)}`,
+      );
+      console.error("  Sandbox is untouched — no data was lost.");
+      bail("External Bedrock Runtime adapter is unavailable");
+      return false;
+    }
+  }
+  if (hostCredentialAvailable || !config.provider || !config.credentialEnv) return true;
   if (isBedrockRuntime) {
     if ((deps.hasBedrockRuntimeAwsAuth ?? hasBedrockRuntimeAwsAuthEnv)()) {
       log("Preflight Bedrock Runtime authentication: explicit AWS auth source is available");
@@ -316,6 +346,9 @@ export async function checkRebuildGatewayCredentialReuseOrBail(
     console.error(`  ${_RD}Rebuild preflight failed:${R} Bedrock Runtime auth is unavailable.`);
     console.error(
       "  Export AWS_BEARER_TOKEN_BEDROCK, AWS_PROFILE, IAM environment credentials, or COMPATIBLE_ANTHROPIC_API_KEY.",
+    );
+    console.error(
+      `  Or run an external Bedrock adapter (managedBy "external"): ${externalBedrockRuntimeAdapterStartCommand()}`,
     );
     console.error("  Sandbox is untouched — no data was lost.");
     bail("Missing Bedrock Runtime authentication");

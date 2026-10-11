@@ -10,6 +10,10 @@ import {
   isBedrockRuntimeEndpoint,
 } from "../inference/bedrock-runtime";
 import { ensureBedrockRuntimeAdapter } from "../inference/bedrock-runtime-adapter";
+import {
+  externalBedrockRuntimeAdapterStartCommand,
+  readExternalBedrockRuntimeAdapterMode,
+} from "../inference/bedrock-runtime/external";
 import type { BackToSelection } from "../navigation";
 import { redact } from "../runner";
 import * as registry from "../state/registry";
@@ -38,9 +42,23 @@ function getExplicitCompatibleCredential(credentialEnv: string | null | undefine
   return normalizeCredentialValue(process.env[credentialEnv]) || null;
 }
 
+/**
+ * An externally supervised adapter holds the AWS credentials on the host, so onboarding does
+ * not need its own. The adapter's health is proven later by `ensureBedrockRuntimeAdapter`.
+ */
+function hasBedrockRuntimeHostAuth(isExternalAdapterMode?: () => boolean): boolean {
+  return (
+    hasBedrockRuntimeAwsAuthEnv() ||
+    (isExternalAdapterMode ?? (() => readExternalBedrockRuntimeAdapterMode()))()
+  );
+}
+
 function printMissingBedrockAuth(error: (message: string) => void): void {
   error(
     `  ${BEDROCK_RUNTIME_AWS_BEARER_TOKEN_ENV}, AWS_PROFILE, IAM environment credentials, or an explicitly exported Bedrock-compatible endpoint key is required for a Bedrock Runtime endpoint.`,
+  );
+  error(
+    `  Or start the external Bedrock adapter first (after aws sso login): ${externalBedrockRuntimeAdapterStartCommand()}`,
   );
 }
 
@@ -77,6 +95,7 @@ export async function selectBedrockRuntimeCustomAnthropic(
       revalidateSandboxIdentity?: (operation: string) => void,
     ) => Promise<string | BackToSelection>;
     credentialMutationGuard?: (operation: string) => void;
+    isExternalAdapterMode?: () => boolean;
   } & BedrockRuntimeDependencies,
 ): Promise<
   | { action: "not-bedrock" }
@@ -91,7 +110,10 @@ export async function selectBedrockRuntimeCustomAnthropic(
   if (classification.kind !== "bedrock-runtime") return { action: "not-bedrock" };
 
   const credentialEnv = options.credentialEnv || BEDROCK_RUNTIME_COMPATIBLE_CREDENTIAL_ENV;
-  if (!hasBedrockRuntimeAwsAuthEnv() && !getExplicitCompatibleCredential(credentialEnv)) {
+  if (
+    !hasBedrockRuntimeHostAuth(options.isExternalAdapterMode) &&
+    !getExplicitCompatibleCredential(credentialEnv)
+  ) {
     if (options.isNonInteractive()) {
       printMissingBedrockAuth(error);
       return exitProcess(1);
@@ -139,6 +161,7 @@ export async function setupBedrockRuntimeInference(
       forceOpenAiLike?: boolean;
     }) => void | Promise<void>;
     ensureAdapter?: typeof ensureBedrockRuntimeAdapter;
+    isExternalAdapterMode?: () => boolean;
     updateSandbox?: typeof registry.updateSandbox;
   } & BedrockRuntimeDependencies,
 ): Promise<{ handled: false } | { handled: true; result: SetupInferenceResult }> {
@@ -151,7 +174,7 @@ export async function setupBedrockRuntimeInference(
 
   const credentialEnv = options.credentialEnv || BEDROCK_RUNTIME_COMPATIBLE_CREDENTIAL_ENV;
   const compatibleCredential = getExplicitCompatibleCredential(credentialEnv);
-  if (!hasBedrockRuntimeAwsAuthEnv() && !compatibleCredential) {
+  if (!hasBedrockRuntimeHostAuth(options.isExternalAdapterMode) && !compatibleCredential) {
     printMissingBedrockAuth(error);
     if (options.isNonInteractive()) return exitProcess(1);
     return { handled: true, result: { retry: "selection" } };
@@ -159,10 +182,10 @@ export async function setupBedrockRuntimeInference(
 
   let adapter: Awaited<ReturnType<typeof ensureBedrockRuntimeAdapter>>;
   try {
-    adapter = await (options.ensureAdapter ?? ensureBedrockRuntimeAdapter)({
-      classification,
-      compatibleCredential,
-    });
+    adapter = await (options.ensureAdapter ?? ensureBedrockRuntimeAdapter)(
+      { classification, compatibleCredential },
+      { log },
+    );
   } catch (err) {
     error(
       `  Failed to start Bedrock Runtime adapter: ${err instanceof Error ? err.message : String(err)}`,
@@ -184,7 +207,7 @@ export async function setupBedrockRuntimeInference(
     return { handled: true, result: { retry: "selection" } };
   }
   log(
-    `  Bedrock Runtime adapter ready: region ${adapter.region}, sandbox route ${adapter.baseUrl}, host log ${adapter.logPath}`,
+    `  Bedrock Runtime adapter ready${adapter.managedBy === "external" ? " (external, reused)" : ""}: region ${adapter.region}, sandbox route ${adapter.baseUrl}, host log ${adapter.logPath}`,
   );
 
   const applyResult = options.runOpenshell(

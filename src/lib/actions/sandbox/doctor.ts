@@ -41,6 +41,7 @@ import * as registry from "../../state/registry";
 import { runSandboxAutoPairApprovalPass } from "./auto-pair-approval";
 import { buildConfigPermsCheck } from "./doctor-config-perms";
 import {
+  collectBedrockRuntimeAdapterDoctorChecks,
   collectInferenceChecks,
   collectManagedLlamaCppDoctorChecks,
   type DoctorInferenceRoute,
@@ -547,6 +548,7 @@ async function collectDoctorChecks(
     ...(await collectRegisteredSandboxChecks(sandboxName, sb, intent.wantsFix, sandbox.reachable)),
     ...(await collectToolScopeChecks(sandboxName, sb, sandbox.reachable, intent.wantsFix)),
     ...collectManagedLlamaCppDoctorChecks(sandboxName, sb?.gatewayPort),
+    ...(await collectBedrockRuntimeAdapterDoctorChecks(route.provider, sb?.endpointUrl)),
     ollamaDoctorCheck(route.provider),
     cloudflaredDoctorCheck(sandboxName),
   ];
