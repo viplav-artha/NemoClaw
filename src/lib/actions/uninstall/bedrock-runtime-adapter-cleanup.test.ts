@@ -8,7 +8,10 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { stopBedrockRuntimeAdapter } from "./openrouter-runtime-adapter-cleanup";
+import {
+  externalBedrockRuntimeAdapterPreservedEntries,
+  stopBedrockRuntimeAdapter,
+} from "./openrouter-runtime-adapter-cleanup";
 
 const PID = 43_210;
 const REPLACEMENT_PID = 43_211;
@@ -770,6 +773,47 @@ describe("Bedrock Runtime adapter fail-closed uninstall cleanup (#9552)", () => 
       expect(lsofPorts).toEqual([]);
       expect(siblingInspected).toBe(false);
       expect(fs.existsSync(path.join(siblingDir, "bedrock-runtime-adapter.json"))).toBe(true);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("externally managed Bedrock Runtime adapter during uninstall", () => {
+  it("never signals or deletes an adapter whose state is marked managedBy external", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bedrock-stop-external-"));
+    writeEvidence(home, { ...adapterState(), managedBy: "external", profile: "dev" });
+    const { host, kills, logs } = cleanupHost(home, new Map([[PID, managedProcess()]]), {
+      lsofPids: [PID],
+    });
+
+    try {
+      expect(stop(home, host)).toEqual({ ok: true, status: "absent" });
+      expect(kills).toEqual([]);
+      const paths = adapterPaths(home);
+      expect(fs.existsSync(paths.pidPath)).toBe(true);
+      expect(fs.existsSync(paths.statePath)).toBe(true);
+      expect(fs.existsSync(paths.tokenPath)).toBe(true);
+      expect(fs.existsSync(lifecyclePaths(home).journalPath)).toBe(false);
+      expect(logs.join("\n")).toContain("externally managed Bedrock Runtime adapter");
+      expect(externalBedrockRuntimeAdapterPreservedEntries(paths.stateDir, {})).toEqual([
+        "bedrock-runtime-adapter.json",
+        "bedrock-runtime-adapter-token",
+        "bedrock-runtime-adapter.pid",
+        "bedrock-runtime-adapter.log",
+      ]);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps NemoClaw-managed evidence eligible for removal", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bedrock-preserve-managed-"));
+    writeEvidence(home);
+    try {
+      expect(
+        externalBedrockRuntimeAdapterPreservedEntries(adapterPaths(home).stateDir, {}),
+      ).toEqual([]);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }

@@ -123,6 +123,7 @@ import {
   removeManagedHermesStateVolumes,
 } from "./hermes-uninstall-cleanup";
 import {
+  externalBedrockRuntimeAdapterPreservedEntries,
   stopBedrockRuntimeAdapter,
   stopHttpsPinRuntimeAdapter,
   stopOpenRouterRuntimeAdapter,
@@ -3793,6 +3794,7 @@ function stateRootPreservationEntries(
   return [
     ...preserveUnderStateDir,
     ...portableStateEntries,
+    ...externalBedrockRuntimeAdapterPreservedEntries(paths.nemoclawStateDir),
     ...failedManagedLlamaStateDirs.flatMap((stateDir) => {
       const relative = path.relative(paths.nemoclawStateDir, stateDir);
       return relative && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)

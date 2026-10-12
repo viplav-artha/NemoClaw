@@ -6,6 +6,8 @@ import { setTimeout as sleep } from "node:timers/promises";
 import type { OpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer";
 import { retryUntilAsync } from "../../core/retry";
 import { DEFAULT_SANDBOX_EXEC_TIMEOUT_MS } from "../../adapters/sandbox/command-transport";
+import { isBedrockRuntimeEndpoint } from "../../inference/bedrock-runtime";
+import { inspectBedrockRuntimeAdapterHost } from "../../inference/bedrock-runtime/external";
 import { cliName } from "../../onboard/branding";
 import {
   classifyRegisteredPortableAgentLifecycle,
@@ -91,8 +93,34 @@ export interface SandboxStartDeps extends StandardSandboxLifecycleDeps {
   recoverPortableSandbox?: typeof recoverPortableAgentSandboxLifecycle;
   requalifyPortableSandbox?: typeof requalifyPortableAgentSandboxAuthority;
   delayInferenceInvocationProbe?: (delayMs: number) => Promise<void>;
+  inspectBedrockRuntimeAdapter?: typeof inspectBedrockRuntimeAdapterHost;
   withLifecycleLock?: typeof withSandboxLifecycleLock;
   log?: (message: string) => void;
+}
+
+/**
+ * Bedrock sandboxes reach a host-side adapter that start does not own. When inference fails,
+ * name the adapter state and its start script instead of starting it: an external adapter
+ * needs an interactive `aws sso login` first.
+ */
+async function logBedrockRuntimeAdapterState(
+  sandbox: SandboxEntry,
+  deps: SandboxStartDeps,
+  log: (message: string) => void,
+): Promise<void> {
+  if (
+    sandbox.provider !== "compatible-anthropic-endpoint" ||
+    !isBedrockRuntimeEndpoint(sandbox.endpointUrl)
+  ) {
+    return;
+  }
+  try {
+    const report = await (deps.inspectBedrockRuntimeAdapter ?? inspectBedrockRuntimeAdapterHost)();
+    log(`  Bedrock Runtime adapter: ${report.detail}.`);
+    if (report.hint) log(`  To fix: ${report.hint}.`);
+  } catch {
+    /* diagnostics only */
+  }
 }
 
 const GATEWAY_PROCESS_SETTLEMENT_DELAY_MS = 2_000;
@@ -338,6 +366,7 @@ async function startSandboxWithinLifecycleFence(
   }
   if (readiness.inference && !readiness.inference.ok) {
     log(`  The sandbox started but inference is not usable: ${readiness.inference.detail}.`);
+    await logBedrockRuntimeAdapterState(resolved.sandbox, deps, log);
     log(`  Run the sandbox doctor command for '${sandboxName}' to identify the failing hop.`);
     return { exitCode: 1 };
   }
