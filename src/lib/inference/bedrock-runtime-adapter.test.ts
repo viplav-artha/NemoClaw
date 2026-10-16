@@ -256,6 +256,85 @@ describe("Bedrock Runtime OpenAI adapter", () => {
     });
   });
 
+  it("converts base64 image parts into Bedrock image blocks, keeping text order", () => {
+    const png = Buffer.from("fake-png-bytes");
+    const input = buildBedrockConverseRequest({
+      model: "amazon.nova-pro-v1:0",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "What is " },
+            { type: "text", text: "in this picture?" },
+            {
+              type: "image_url",
+              image_url: { url: `data:image/png;base64,${png.toString("base64")}` },
+            },
+            { type: "image_url", image_url: `data:image/jpg;base64,${png.toString("base64")}` },
+          ],
+        },
+      ],
+    });
+
+    expect(input.messages?.[0]?.content).toEqual([
+      { text: "What is in this picture?" },
+      { image: { format: "png", source: { bytes: png } } },
+      { image: { format: "jpeg", source: { bytes: png } } },
+    ]);
+  });
+
+  it("passes images returned by tools through as tool result image blocks", () => {
+    const png = Buffer.from("screenshot");
+    const input = buildBedrockConverseRequest({
+      model: "amazon.nova-pro-v1:0",
+      messages: [
+        { role: "user", content: "take a screenshot" },
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            { id: "toolu_1", type: "function", function: { name: "shot", arguments: "{}" } },
+          ],
+        },
+        {
+          role: "tool",
+          tool_call_id: "toolu_1",
+          content: [
+            { type: "text", text: "done" },
+            {
+              type: "image_url",
+              image_url: { url: `data:image/png;base64,${png.toString("base64")}` },
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(input.messages?.[2]?.content?.[0]).toEqual({
+      toolResult: {
+        toolUseId: "toolu_1",
+        content: [{ text: "done" }, { image: { format: "png", source: { bytes: png } } }],
+      },
+    });
+  });
+
+  it.each([
+    ["a remote URL", "https://example.com/cat.png", "remote image URLs are not supported"],
+    ["an unsupported format", "data:image/bmp;base64,AAAA", "image format 'bmp' is not supported"],
+    [
+      "an oversized image",
+      `data:image/png;base64,${"A".repeat(5_100_000)}`,
+      "at most 3750000 bytes",
+    ],
+  ])("rejects %s with a clear 400", (_label, url, message) => {
+    expect(() =>
+      buildBedrockConverseRequest({
+        model: "amazon.nova-pro-v1:0",
+        messages: [{ role: "user", content: [{ type: "image_url", image_url: { url } }] }],
+      }),
+    ).toThrow(message);
+  });
+
   it("round-trips tool calls and tool results", async () => {
     const input = buildBedrockConverseRequest({
       model: "anthropic.claude-3-5-sonnet-20240620-v1:0",
