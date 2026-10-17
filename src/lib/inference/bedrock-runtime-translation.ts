@@ -11,6 +11,7 @@ import {
   ConverseStreamCommand,
   type ConverseStreamCommandInput,
   type ConverseStreamOutput,
+  type ImageFormat,
   type Message,
   type SystemContentBlock,
   type ToolConfiguration,
@@ -137,6 +138,72 @@ function maybeJsonToolResult(value: string): { json: unknown } | { text: string 
   return { text: value };
 }
 
+// Image formats Bedrock Converse accepts, and its per-image size limit (3.75 MB).
+const BEDROCK_IMAGE_FORMATS = new Set<string>(["png", "jpeg", "gif", "webp"]);
+const MAX_BEDROCK_IMAGE_BYTES = 3_750_000;
+const IMAGE_DATA_URL = /^data:image\/([a-z0-9.+-]+);base64,([A-Za-z0-9+/=\s]+)$/i;
+
+// OpenAI image parts carry `image_url: { url }` (or a bare string). Only base64 data URLs are
+// accepted: the adapter never fetches remote URLs on the model's behalf.
+function imageBlockFromOpenAiPart(part: JsonObject, label: string): ContentBlock {
+  const imageUrl = part.image_url;
+  const url =
+    typeof imageUrl === "string"
+      ? imageUrl
+      : imageUrl && typeof imageUrl === "object"
+        ? (imageUrl as JsonObject).url
+        : undefined;
+  if (typeof url !== "string" || !url) badRequest(`${label} image_url parts require a url.`);
+  const match = IMAGE_DATA_URL.exec(url);
+  if (!match) {
+    badRequest(
+      `${label} images must be base64 data URLs (data:image/<format>;base64,...); remote image URLs are not supported for Bedrock Runtime.`,
+    );
+  }
+  const subtype = match[1].toLowerCase();
+  const format = subtype === "jpg" ? "jpeg" : subtype;
+  if (!BEDROCK_IMAGE_FORMATS.has(format)) {
+    badRequest(
+      `${label} image format '${subtype}' is not supported for Bedrock Runtime (use png, jpeg, gif or webp).`,
+    );
+  }
+  const bytes = Buffer.from(match[2].replace(/\s+/g, ""), "base64");
+  if (bytes.length === 0) badRequest(`${label} image is empty.`);
+  if (bytes.length > MAX_BEDROCK_IMAGE_BYTES) {
+    badRequest(
+      `${label} image is ${bytes.length} bytes; Bedrock Runtime accepts at most ${MAX_BEDROCK_IMAGE_BYTES} bytes per image.`,
+    );
+  }
+  return { image: { format: format as ImageFormat, source: { bytes } } };
+}
+
+// Text and image parts, in order; adjacent text parts are joined into one block.
+function contentBlocksWithImages(content: unknown, label: string): ContentBlock[] {
+  if (!Array.isArray(content)) return contentBlocksFromText(content, label);
+  const blocks: ContentBlock[] = [];
+  let text = "";
+  const flushText = () => {
+    if (text) blocks.push({ text });
+    text = "";
+  };
+  for (const item of content) {
+    if (!item || typeof item !== "object") {
+      badRequest(`${label} content arrays may only contain text and image parts.`);
+    }
+    const part = item as JsonObject;
+    if (part.type === "text" && typeof part.text === "string") {
+      text += part.text;
+    } else if (part.type === "image_url") {
+      flushText();
+      blocks.push(imageBlockFromOpenAiPart(part, label));
+    } else {
+      badRequest(`${label} content only supports text and image parts for Bedrock Runtime.`);
+    }
+  }
+  flushText();
+  return blocks;
+}
+
 function textFromOpenAiContent(content: unknown, label: string): string {
   if (content == null) return "";
   if (typeof content === "string") return content;
@@ -184,12 +251,12 @@ function toolResultBlocksFromContent(content: unknown): ContentBlock[] {
       } as ContentBlock,
     ];
   }
-  const text = textFromOpenAiContent(content, "tool");
+  const blocks = contentBlocksWithImages(content, "tool");
   return [
     {
       toolResult: {
         toolUseId: "",
-        content: [{ text }],
+        content: blocks.length > 0 ? blocks : [{ text: "" }],
       },
     } as ContentBlock,
   ];
@@ -220,7 +287,7 @@ function convertOpenAiMessages(messages: OpenAiMessage[]): {
     if (role === "user") {
       bedrockMessages.push({
         role: "user",
-        content: contentBlocksFromText(message.content, "user"),
+        content: contentBlocksWithImages(message.content, "user"),
       });
       continue;
     }

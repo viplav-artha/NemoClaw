@@ -101,7 +101,8 @@ const TOKEN_PATH = path.join(STATE_DIR, BEDROCK_RUNTIME_ADAPTER_TOKEN_FILE);
 const PID_PATH = path.join(STATE_DIR, BEDROCK_RUNTIME_ADAPTER_PID_FILE);
 const STATE_PATH = path.join(STATE_DIR, BEDROCK_RUNTIME_ADAPTER_STATE_FILE);
 export const LOG_PATH = path.join(STATE_DIR, BEDROCK_RUNTIME_ADAPTER_LOG_FILE);
-const MAX_BODY_BYTES = 2 * 1024 * 1024;
+// Large enough for image messages: base64 adds a third, and history can repeat images.
+const MAX_BODY_BYTES = 40 * 1024 * 1024;
 const MODEL_CATALOG_HEALTH_PATH = BEDROCK_RUNTIME_ADAPTER_MODEL_CATALOG_HEALTH_PATH;
 
 const { defaultLogger: defaultAdapterLogger, logEvent: logAdapterEvent } = createLocalAdapterLogger(
