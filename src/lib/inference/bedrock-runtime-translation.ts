@@ -261,7 +261,18 @@ function convertOpenAiMessages(messages: OpenAiMessage[]): {
         }
         return block;
       });
-      bedrockMessages.push({ role: "user", content: blocks });
+      // Converse requires all results from a parallel assistant tool turn in
+      // one following user message. OpenAI represents each result separately.
+      const previous = bedrockMessages.at(-1);
+      if (
+        previous?.role === "user" &&
+        previous.content?.length &&
+        previous.content.every((block) => "toolResult" in block)
+      ) {
+        previous.content.push(...blocks);
+      } else {
+        bedrockMessages.push({ role: "user", content: blocks });
+      }
       continue;
     }
     badRequest(`Unsupported message role '${message.role}'.`);

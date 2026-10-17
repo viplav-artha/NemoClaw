@@ -1166,3 +1166,44 @@ describe("Bedrock Runtime OpenAI adapter", () => {
     }
   });
 });
+
+describe("Bedrock parallel tool results", () => {
+  it("groups parallel results into the next user message and preserves subsequent user text", () => {
+    const input = buildBedrockConverseRequest({
+      model: "moonshotai.kimi-k2.5",
+      messages: [
+        { role: "user", content: "Look up the deal and comments." },
+        {
+          role: "assistant",
+          tool_calls: [
+            {
+              id: "overview",
+              type: "function",
+              function: { name: "get_deal_overview", arguments: "{}" },
+            },
+            {
+              id: "comments",
+              type: "function",
+              function: { name: "get_deal_comments", arguments: "{}" },
+            },
+          ],
+        },
+        { role: "tool", tool_call_id: "overview", content: '{"stage":"evaluation"}' },
+        { role: "tool", tool_call_id: "comments", content: '{"comments":[]}' },
+        { role: "user", content: "Summarize only verified facts." },
+      ],
+    });
+    expect(input.messages).toHaveLength(4);
+    expect(input.messages?.[2]).toEqual({
+      role: "user",
+      content: [
+        { toolResult: { toolUseId: "overview", content: [{ json: { stage: "evaluation" } }] } },
+        { toolResult: { toolUseId: "comments", content: [{ json: { comments: [] } }] } },
+      ],
+    });
+    expect(input.messages?.[3]).toEqual({
+      role: "user",
+      content: [{ text: "Summarize only verified facts." }],
+    });
+  });
+});
