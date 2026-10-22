@@ -196,40 +196,60 @@ const LEGACY_SHAPE = {
   ],
 } as const;
 
-const SHAPE_20260901 = {
-  unpatched: [
-    PREPARED_ENTRY_20260901_PATTERN,
-    TASK_OPEN_20260901_PATTERN,
-    TASK_CLOSE_20260901_PATTERN,
-    START_FAILURE_RETURN_20260901_PATTERN,
-    ACQUIRE_LEASE_PATTERN,
-  ],
-  required: [
-    PREPARED_ENTRY_20260901_PATTERN,
-    TASK_OPEN_20260901_PATTERN,
-    TASK_CLOSE_20260901_PATTERN,
-    START_FAILURE_RETURN_20260901_PATTERN,
-    ACQUIRE_LEASE_PATTERN,
-    TRANSPORT_FACTORY_IMPORT_20260901_PATTERN,
-    SESSION_SCOPE_BINDINGS_20260901_PATTERN,
-    PREPARED_TRANSPORT_SCOPE_20260901_PATTERN,
-  ],
-  patched: [
-    MARKER,
-    PREPARED_ENTRY_20260901_REPLACEMENT,
-    TASK_OPEN_20260901_REPLACEMENT,
-    TASK_CLOSE_20260901_REPLACEMENT,
-    START_FAILURE_RETURN_20260901_REPLACEMENT,
-    ACQUIRE_LEASE_REPLACEMENT,
-  ],
-  replacements: [
-    [PREPARED_ENTRY_20260901_PATTERN, PREPARED_ENTRY_20260901_REPLACEMENT],
-    [TASK_OPEN_20260901_PATTERN, TASK_OPEN_20260901_REPLACEMENT],
-    [TASK_CLOSE_20260901_PATTERN, TASK_CLOSE_20260901_REPLACEMENT],
-    [START_FAILURE_RETURN_20260901_PATTERN, START_FAILURE_RETURN_20260901_REPLACEMENT],
-    [ACQUIRE_LEASE_PATTERN, ACQUIRE_LEASE_REPLACEMENT],
-  ],
-} as const;
+// Builds that pass the session key into resolveMcpTransport (for per-session request
+// signing) must keep passing it when the startup retry re-resolves the transport.
+const REQUESTER_SCOPE_ARG_20260901 = "\t\t\t\t\t\trequesterScope: params.requesterScope\n";
+const REQUESTER_SCOPE_SESSION_KEY_ARGS_20260901 = [
+  "\t\t\t\t\t\trequesterScope: params.requesterScope,",
+  "\t\t\t\t\t\tsessionKey: params.sessionKey\n",
+].join("\n");
+
+function withSessionKeyArg(text: string): string {
+  return text.replace(REQUESTER_SCOPE_ARG_20260901, REQUESTER_SCOPE_SESSION_KEY_ARGS_20260901);
+}
+
+function shape20260901(passesSessionKey: boolean) {
+  const preparedTransportScope = passesSessionKey
+    ? withSessionKeyArg(PREPARED_TRANSPORT_SCOPE_20260901_PATTERN)
+    : PREPARED_TRANSPORT_SCOPE_20260901_PATTERN;
+  const taskOpenReplacement = passesSessionKey
+    ? withSessionKeyArg(TASK_OPEN_20260901_REPLACEMENT)
+    : TASK_OPEN_20260901_REPLACEMENT;
+  return {
+    unpatched: [
+      PREPARED_ENTRY_20260901_PATTERN,
+      TASK_OPEN_20260901_PATTERN,
+      TASK_CLOSE_20260901_PATTERN,
+      START_FAILURE_RETURN_20260901_PATTERN,
+      ACQUIRE_LEASE_PATTERN,
+    ],
+    required: [
+      PREPARED_ENTRY_20260901_PATTERN,
+      TASK_OPEN_20260901_PATTERN,
+      TASK_CLOSE_20260901_PATTERN,
+      START_FAILURE_RETURN_20260901_PATTERN,
+      ACQUIRE_LEASE_PATTERN,
+      TRANSPORT_FACTORY_IMPORT_20260901_PATTERN,
+      SESSION_SCOPE_BINDINGS_20260901_PATTERN,
+      preparedTransportScope,
+    ],
+    patched: [
+      MARKER,
+      PREPARED_ENTRY_20260901_REPLACEMENT,
+      taskOpenReplacement,
+      TASK_CLOSE_20260901_REPLACEMENT,
+      START_FAILURE_RETURN_20260901_REPLACEMENT,
+      ACQUIRE_LEASE_REPLACEMENT,
+    ],
+    replacements: [
+      [PREPARED_ENTRY_20260901_PATTERN, PREPARED_ENTRY_20260901_REPLACEMENT],
+      [TASK_OPEN_20260901_PATTERN, taskOpenReplacement],
+      [TASK_CLOSE_20260901_PATTERN, TASK_CLOSE_20260901_REPLACEMENT],
+      [START_FAILURE_RETURN_20260901_PATTERN, START_FAILURE_RETURN_20260901_REPLACEMENT],
+      [ACQUIRE_LEASE_PATTERN, ACQUIRE_LEASE_REPLACEMENT],
+    ],
+  } as const;
+}
 
 /**
  * Injected compatibility runtime for OpenClaw `bundle-mcp`.
@@ -429,11 +449,15 @@ function listJsFiles(dir: string): string[] {
 
 /** Fail closed: a recognized bundle-mcp runtime must expose every patch anchor exactly once. */
 export function patchBundleMcpRuntimeText(source: string, filePath: string): PatchTextResult {
+  const passesSessionKey =
+    source.includes(withSessionKeyArg(PREPARED_TRANSPORT_SCOPE_20260901_PATTERN)) ||
+    source.includes(withSessionKeyArg(TASK_OPEN_20260901_REPLACEMENT));
   const currentLayout =
     source.includes(TASK_OPEN_20260901_PATTERN) ||
     source.includes(TASK_OPEN_20260901_REPLACEMENT) ||
+    passesSessionKey ||
     (source.includes("policyToolEntries: []") && source.includes("launchDescription"));
-  const shape = currentLayout ? SHAPE_20260901 : LEGACY_SHAPE;
+  const shape = currentLayout ? shape20260901(passesSessionKey) : LEGACY_SHAPE;
   if (source.includes(MARKER)) {
     for (const pattern of shape.patched) {
       const count = countOccurrences(source, pattern);

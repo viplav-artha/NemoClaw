@@ -7,6 +7,9 @@ ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest
 ARG NEMOCLAW_CORPORATE_CA_B64=
 ARG NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0
 ARG TARGETARCH
+# Patched OpenClaw build whose dist/ replaces the npm openclaw dist/. Pin by digest.
+# Only files are copied out of it, so its amd64-only platform also works on arm64 hosts.
+ARG OPENCLAW_CUSTOM_DIST_IMAGE=ghcr.io/viplav-artha/openclaw@sha256:235f16cf729a0a57fd8fc36251c9694917d8c8c46df3d5f512c34c12c23f7248
 ARG CODEX_ACP_0_11_1_INTEGRITY=sha512-My2VSlBtvJipJhImHjFDej2ut/p00QqOISRnZgLgLrSIzjgvdcQvAhaZviWj7XPhk4UIdIb0OoA+Lrls824uiQ==
 ARG CODEX_ACP_LINUX_AMD64_0_11_1_INTEGRITY=sha512-30vSoZuW1DP6Nuz24Gg3jgVC37IYe0bZ/Fgc5+372gc0h72NN4zHYAbu5bRd/gUJ9GdwABKrrEPCoFPlOTVTnQ==
 ARG CODEX_ACP_LINUX_ARM64_0_11_1_INTEGRITY=sha512-I1f6WoSLbLlsWq4zH+vtwdoc4Y41mqRXPpSkfgIifxBw34QmWJmi37etZ7lKTYp6R+J/Z4PUN0rsmnsmKpBZTw==
@@ -14,7 +17,7 @@ ARG CODEX_ACP_LINUX_ARM64_0_11_1_INTEGRITY=sha512-I1f6WoSLbLlsWq4zH+vtwdoc4Y41mq
 FROM scratch AS reviewed-npm-archive
 ADD --chmod=0444 --checksum=sha256:5dbb86c71d07a1957f2e90734092dd6a58bdcd9ebc2d8d41ca1c6e6a21d364e1 https://registry.npmjs.org/npm/-/npm-12.0.2.tgz /npm-12.0.2.tgz
 FROM node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc AS npm12
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates=20250419 curl=8.14.1-2+deb13u5 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates=20250419 curl=8.14.1-2+deb13u7 && rm -rf /var/lib/apt/lists/*
 COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/patch-bundled-npm-ip-address.mts scripts/lib/reviewed-npm-identity.mts /scripts/lib/
 COPY scripts/patch-bundled-npm-brace-expansion.mts scripts/patch-bundled-npm-tar.mts scripts/upgrade-bundled-npm.mts /scripts/
 COPY ci/reviewed-npm-audit.json /ci/reviewed-npm-audit.json
@@ -657,6 +660,15 @@ COPY --from=builder /opt/nemoclaw/dist/ /opt/nemoclaw/dist/
 COPY nemoclaw/openclaw.plugin.json /opt/nemoclaw/
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
 
+# Custom OpenClaw dist/ from OPENCLAW_CUSTOM_DIST_IMAGE. The locked npm dependency
+# graph is still installed and verified first; only openclaw's dist/ is swapped.
+FROM --platform=linux/amd64 ${OPENCLAW_CUSTOM_DIST_IMAGE} AS custom-openclaw-image
+
+FROM scratch AS custom-openclaw-dist
+
+COPY --from=custom-openclaw-image /app/package.json /package.json
+COPY --from=custom-openclaw-image /app/dist/ /dist/
+
 FROM scratch AS openclaw-patch-payload
 
 COPY scripts/patch-openclaw-tool-catalog.mts /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts
@@ -924,12 +936,14 @@ RUN command -v codex-acp >/dev/null
 
 # Upgrade stale bases. Reuse is restricted to matching provenance from an
 # official digest-pinned base; mutable/custom bases reinstall the locked graphs.
+# The custom OpenClaw dist/ always forces the reinstall so it can replace openclaw's dist/.
 # OPENCLAW_VERSION is the NemoClaw runtime build target and must meet the blueprint minimum.
 # Reviewed archives retain registry and packed-byte SRI, basename, local-only install, and cleanup gates.
 # hadolint ignore=DL3059,DL4006,DL3016,SC2015
 RUN --mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false \
     --mount=type=secret,id=nemoclaw-mcporter-audit-raw-report,required=false \
     --mount=type=secret,id=nemoclaw-mcporter-audit-policy-result,required=false \
+    --mount=type=bind,from=custom-openclaw-dist,target=/tmp/nemoclaw-custom-openclaw \
     set -eu; \
     if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
         export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
@@ -1029,6 +1043,11 @@ RUN --mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false \
         && [ "$CUR_MCPORTER_VER" = "$MCPORTER_VERSION" ]; then \
         USE_REVIEWED_BASE_RUNTIME=1; \
     fi; \
+    CUSTOM_OPENCLAW_SRC=/tmp/nemoclaw-custom-openclaw; \
+    node -e 'const p=require(process.argv[1]); if (p.name!=="openclaw"||p.version!==process.argv[2]) { console.error("ERROR: custom OpenClaw image has "+p.name+"@"+p.version+", expected openclaw@"+process.argv[2]); process.exit(1); }' \
+        "$CUSTOM_OPENCLAW_SRC/package.json" "$OPENCLAW_VERSION"; \
+    echo "INFO: Replacing OpenClaw dist/ with the custom OpenClaw image build"; \
+    USE_REVIEWED_BASE_RUNTIME=0; \
     rm -f "$OPENCLAW_EXPECTED_PROVENANCE"; \
     rm -rf "$OPENCLAW_PROVENANCE_PATH"; \
     if [ "$USE_REVIEWED_BASE_RUNTIME" = "1" ]; then \
@@ -1057,6 +1076,11 @@ RUN --mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false \
                 --lockfile /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json \
                 --install-root /usr/local/lib/nemoclaw/openclaw-runtime \
                 --label "OpenClaw ${OPENCLAW_VERSION}"; \
+            # Keep the verified dependency graph and npm package files; swap only dist/.
+            rm -rf /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw/dist; \
+            cp -R --no-preserve=ownership "$CUSTOM_OPENCLAW_SRC/dist" /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw/dist; \
+            rm -f /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw/dist/.buildstamp \
+                /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw/dist/.runtime-postbuildstamp; \
             node /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs; \
             mkdir -p /usr/local/lib/node_modules; \
             ln -s /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw /usr/local/lib/node_modules/openclaw; \

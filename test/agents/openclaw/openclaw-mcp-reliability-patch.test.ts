@@ -300,6 +300,28 @@ describe("OpenClaw MCP transient startup recovery patch (#7958)", () => {
     );
     expect(result.text).toContain("cfg: params.cfg");
     expect(result.text).toContain("prepareDataDir: loaded.prepareDataDirsByServer");
+    expect(result.text).not.toContain("sessionKey: params.sessionKey");
+  });
+
+  it("keeps passing the session key when the 2026.9.1 retry re-resolves the transport", () => {
+    const source = bundleMcpRuntime20260901Fixture().replace(
+      "\t\t\t\t\t\trequesterScope: params.requesterScope\n\t\t\t\t\t});",
+      "\t\t\t\t\t\trequesterScope: params.requesterScope,\n\t\t\t\t\t\tsessionKey: params.sessionKey\n\t\t\t\t\t});",
+    );
+    expect(source).toContain("sessionKey: params.sessionKey");
+    const result = patchBundleMcpRuntimeText(source, "fixture-2026.9.1-session-key.js");
+
+    expect(result.patched).toBe(true);
+    const retry = result.text.slice(
+      result.text.indexOf("resolveTransport: () => resolveMcpTransport("),
+      result.text.indexOf("attempt: async (resolved)"),
+    );
+    expect(retry).toContain(
+      "requesterScope: params.requesterScope,\n\t\t\t\t\t\tsessionKey: params.sessionKey\n",
+    );
+    expect(patchBundleMcpRuntimeText(result.text, "fixture-2026.9.1-session-key.js").status).toBe(
+      "already-patched",
+    );
   });
 
   it.each([
